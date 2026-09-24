@@ -1,0 +1,39 @@
+name: auto-ml-adk
+
+services:
+  api:
+    build:
+      context: ..
+      dockerfile: infra/api.Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      ML_DATA_ROOT: /data
+      ML_SESSION_BACKEND: sqlite
+      ML_API_HOST: 0.0.0.0
+      ML_API_PORT: "8000"
+      ML_API_CORS: http://localhost:3000
+      ML_RUNTIME_MODEL: ${ML_RUNTIME_MODEL:-scripted}
+      OLLAMA_API_BASE: ${OLLAMA_API_BASE:-http://host.docker.internal:11434}
+    volumes:
+      - ml-data:/data
+      - ../config:/app/config:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  web:
+    build:
+      context: ..
+      dockerfile: infra/web.Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: http://localhost:8000
+    ports:
+      - "3000:3000"
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:8000
+      API_URL: http://api:8000
+    depends_on:
+      - api
+
+volumes:
+  ml-data:

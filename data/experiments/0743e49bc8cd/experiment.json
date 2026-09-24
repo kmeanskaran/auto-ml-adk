@@ -1,0 +1,512 @@
+{
+  "approve_training": false,
+  "best": {
+    "metrics": {
+      "accuracy": 0.9790209790209791,
+      "f1": 0.9714285714285714,
+      "precision": 0.9807692307692307,
+      "recall": 0.9622641509433962
+    },
+    "model": "logistic_regression",
+    "path": "/Users/karan/Documents/machine-learning/auto-ml-adk/data/experiments/0743e49bc8cd/model.joblib",
+    "run_id": 2,
+    "strategy_level": 1
+  },
+  "blocked_tools": [
+    "run_analysis_snippet"
+  ],
+  "error": null,
+  "eval_count": 2,
+  "fault": null,
+  "history": [
+    {
+      "candidates": [
+        {
+          "accuracy": 0.6293706293706294,
+          "f1": 0.0,
+          "name": "majority_baseline",
+          "precision": 0.0,
+          "recall": 0.0,
+          "threshold": 0.15
+        }
+      ],
+      "iteration": 1,
+      "metrics": {
+        "accuracy": 0.6293706293706294,
+        "f1": 0.0,
+        "precision": 0.0,
+        "recall": 0.0
+      },
+      "model": "majority_baseline",
+      "path": "/Users/karan/Documents/machine-learning/auto-ml-adk/data/experiments/0743e49bc8cd/model_iter1.joblib",
+      "strategy_level": 0
+    },
+    {
+      "candidates": [
+        {
+          "accuracy": 0.9790209790209791,
+          "f1": 0.9714285714285714,
+          "name": "logistic_regression",
+          "precision": 0.9807692307692307,
+          "recall": 0.9622641509433962,
+          "threshold": 0.53
+        },
+        {
+          "accuracy": 0.972027972027972,
+          "f1": 0.9622641509433962,
+          "name": "random_forest",
+          "precision": 0.9622641509433962,
+          "recall": 0.9622641509433962,
+          "threshold": 0.62
+        }
+      ],
+      "iteration": 2,
+      "metrics": {
+        "accuracy": 0.9790209790209791,
+        "f1": 0.9714285714285714,
+        "precision": 0.9807692307692307,
+        "recall": 0.9622641509433962
+      },
+      "model": "logistic_regression",
+      "path": "/Users/karan/Documents/machine-learning/auto-ml-adk/data/experiments/0743e49bc8cd/model_iter2.joblib",
+      "strategy_level": 1
+    }
+  ],
+  "id": "0743e49bc8cd",
+  "identity": "ml-engineer@local",
+  "last_plan": "The majority-class baseline is below the target. Next pass adds interaction features and trains logistic regression and a random forest in parallel.",
+  "model_name": "ollama_chat/gpt-oss:20b-cloud",
+  "notes": [],
+  "objective": {
+    "metric": "f1",
+    "target": 0.75,
+    "target_column": "diagnosis",
+    "text": "Predict whether a breast tumor is malignant or benign. Optimize for F1."
+  },
+  "pending_approval": null,
+  "phases": {
+    "analyze_target": {
+      "fingerprint": "/Users/karan/Documents/machine-learning/auto-ml-adk/data/experiments/0743e49bc8cd/raw.csv:124869:1790100081598284358",
+      "result": {
+        "classes": {
+          "benign": 357,
+          "malignant": 212
+        },
+        "missing_target": 0,
+        "rows": 569,
+        "target": "diagnosis"
+      },
+      "status": "ok"
+    },
+    "clean_dataset": {
+      "fingerprint": "/Users/karan/Documents/machine-learning/auto-ml-adk/data/experiments/0743e49bc8cd/raw.csv:124869:1790100081598284358",
+      "result": {
+        "duplicate_rows_removed": 0,
+        "fills": {},
+        "missing_after": 0,
+        "missing_before": 0,
+        "path": "/Users/karan/Documents/machine-learning/auto-ml-adk/data/experiments/0743e49bc8cd/clean.csv",
+        "rows_after": 569,
+        "rows_before": 569,
+        "rows_missing_target_removed": 0
+      },
+      "status": "ok"
+    },
+    "create_features": {
+      "fingerprint": "strategy:1",
+      "result": {
+        "base_columns": [
+          "mean radius",
+          "mean texture",
+          "mean perimeter",
+          "mean area",
+          "mean smoothness",
+          "mean compactness",
+          "mean concavity",
+          "mean concave points",
+          "mean symmetry",
+          "mean fractal dimension",
+          "radius error",
+          "texture error",
+          "perimeter error",
+          "area error",
+          "smoothness error",
+          "compactness error",
+          "concavity error",
+          "concave points error",
+          "symmetry error",
+          "fractal dimension error",
+          "worst radius",
+          "worst texture",
+          "worst perimeter",
+          "worst area",
+          "worst smoothness",
+          "worst compactness",
+          "worst concavity",
+          "worst concave points",
+          "worst symmetry",
+          "worst fractal dimension"
+        ],
+        "categorical": [],
+        "engineered": [],
+        "numeric": [
+          "mean radius",
+          "mean texture",
+          "mean perimeter",
+          "mean area",
+          "mean smoothness",
+          "mean compactness",
+          "mean concavity",
+          "mean concave points",
+          "mean symmetry",
+          "mean fractal dimension",
+          "radius error",
+          "texture error",
+          "perimeter error",
+          "area error",
+          "smoothness error",
+          "compactness error",
+          "concavity error",
+          "concave points error",
+          "symmetry error",
+          "fractal dimension error",
+          "worst radius",
+          "worst texture",
+          "worst perimeter",
+          "worst area",
+          "worst smoothness",
+          "worst compactness",
+          "worst concavity",
+          "worst concave points",
+          "worst symmetry",
+          "worst fractal dimension"
+        ],
+        "path": "/Users/karan/Documents/machine-learning/auto-ml-adk/data/experiments/0743e49bc8cd/feature_pipeline.json",
+        "strategy_level": 1,
+        "target": "diagnosis"
+      },
+      "status": "ok"
+    },
+    "evaluate_model": {
+      "fingerprint": "run:2:target:0.75",
+      "result": {
+        "eval_count": 2,
+        "f1": 0.9714285714285714,
+        "metric": "f1",
+        "model": "logistic_regression",
+        "run_id": 2,
+        "strategy_level": 1,
+        "target": 0.75,
+        "target_met": true
+      },
+      "status": "ok"
+    },
+    "inspect_schema": {
+      "fingerprint": "/Users/karan/Documents/machine-learning/auto-ml-adk/data/experiments/0743e49bc8cd/raw.csv:124869:1790100081598284358",
+      "result": {
+        "columns": [
+          {
+            "dtype": "float64",
+            "missing": 0,
+            "name": "mean radius",
+            "unique": 456
+          },
+          {
+            "dtype": "float64",
+            "missing": 0,
+            "name": "mean texture",
+            "unique": 479
+          },
+          {
+            "dtype": "float64",
+            "missing": 0,
+            "name": "mean perimeter",
+            "unique": 522
+          },
+          {
+            "dtype": "float64",
+            "missing": 0,
+            "name": "mean area",
+            "unique": 539
+          },
+          {
+            "dtype": "float64",
+            "missing": 0,
+            "name": "mean smoothness",
+            "unique": 474
+          },
+          {
+            "dtype": "float64",
+            "missing": 0,
+            "name": "mean compactness",
+            "unique": 537
+          },
+          {
+            "dtype": "float64",
+            "missing": 0,
+            "name": "mean concavity",
+            "unique": 537
+          },
+          {
+            "dtype": "float64",
+            "missing": 0,
+            "name": "mean concave points",
+            "unique": 542
+          },
+          {
+            "dtype": "float64",
+            "missing": 0,
+            "name": "mean symmetry",
+            "unique": 432
+          },
+          {
+            "dtype": "float64",
+            "missing": 0,
+            "name": "mean fractal dimension",
+            "unique": 499
+          },
+          {
+            "dtype": "float64",
+            "missing": 0,
+            "name": "radius error",
+            "unique": 540
+          },
+          {
+            "dtype": "float64",
+            "missing": 0,
+            "name": "texture error",
+            "unique": 519
+          },
+          {
+            "dtype": "float64",
+            "missing": 0,
+            "name": "perimeter error",
+            "unique": 533
+          },
+          {
+            "dtype": "float64",
+            "missing": 0,
+            "name": "area error",
+            "unique": 528
+          },
+          {
+            "dtype": "float64",
+            "missing": 0,
+            "name": "smoothness error",
+            "unique": 547
+          },
+          {
+            "dtype": "float64",
+            "missing": 0,
+            "name": "compactness error",
+            "unique": 541
+          },
+          {
+            "dtype": "float64",
+            "missing": 0,
+            "name": "concavity error",
+            "unique": 533
+          },
+          {
+            "dtype": "float64",
+            "missing": 0,
+            "name": "concave points error",
+            "unique": 507
+          },
+          {
+            "dtype": "float64",
+            "missing": 0,
+            "name": "symmetry error",
+            "unique": 498
+          },
+          {
+            "dtype": "float64",
+            "missing": 0,
+            "name": "fractal dimension error",
+            "unique": 545
+          },
+          {
+            "dtype": "float64",
+            "missing": 0,
+            "name": "worst radius",
+            "unique": 457
+          },
+          {
+            "dtype": "float64",
+            "missing": 0,
+            "name": "worst texture",
+            "unique": 511
+          },
+          {
+            "dtype": "float64",
+            "missing": 0,
+            "name": "worst perimeter",
+            "unique": 514
+          },
+          {
+            "dtype": "float64",
+            "missing": 0,
+            "name": "worst area",
+            "unique": 544
+          },
+          {
+            "dtype": "float64",
+            "missing": 0,
+            "name": "worst smoothness",
+            "unique": 411
+          },
+          {
+            "dtype": "float64",
+            "missing": 0,
+            "name": "worst compactness",
+            "unique": 529
+          },
+          {
+            "dtype": "float64",
+            "missing": 0,
+            "name": "worst concavity",
+            "unique": 539
+          },
+          {
+            "dtype": "float64",
+            "missing": 0,
+            "name": "worst concave points",
+            "unique": 492
+          },
+          {
+            "dtype": "float64",
+            "missing": 0,
+            "name": "worst symmetry",
+            "unique": 500
+          },
+          {
+            "dtype": "float64",
+            "missing": 0,
+            "name": "worst fractal dimension",
+            "unique": 535
+          },
+          {
+            "dtype": "object",
+            "missing": 0,
+            "name": "diagnosis",
+            "unique": 2
+          }
+        ],
+        "rows": 569
+      },
+      "status": "ok"
+    },
+    "profile_quality": {
+      "fingerprint": "/Users/karan/Documents/machine-learning/auto-ml-adk/data/experiments/0743e49bc8cd/raw.csv:124869:1790100081598284358",
+      "result": {
+        "constant_columns": [],
+        "duplicate_id_rows": 0,
+        "missing_by_column": {},
+        "missing_cells": 0,
+        "rows": 569
+      },
+      "status": "ok"
+    },
+    "run_training": {
+      "fingerprint": "strategy:1",
+      "result": {
+        "candidates": [
+          {
+            "accuracy": 0.9790209790209791,
+            "f1": 0.9714285714285714,
+            "name": "logistic_regression",
+            "precision": 0.9807692307692307,
+            "recall": 0.9622641509433962,
+            "threshold": 0.53
+          },
+          {
+            "accuracy": 0.972027972027972,
+            "f1": 0.9622641509433962,
+            "name": "random_forest",
+            "precision": 0.9622641509433962,
+            "recall": 0.9622641509433962,
+            "threshold": 0.62
+          }
+        ],
+        "categorical": [],
+        "decision_threshold": 0.53,
+        "iteration": 2,
+        "metrics": {
+          "accuracy": 0.9790209790209791,
+          "f1": 0.9714285714285714,
+          "precision": 0.9807692307692307,
+          "recall": 0.9622641509433962
+        },
+        "numeric": [
+          "mean radius",
+          "mean texture",
+          "mean perimeter",
+          "mean area",
+          "mean smoothness",
+          "mean compactness",
+          "mean concavity",
+          "mean concave points",
+          "mean symmetry",
+          "mean fractal dimension",
+          "radius error",
+          "texture error",
+          "perimeter error",
+          "area error",
+          "smoothness error",
+          "compactness error",
+          "concavity error",
+          "concave points error",
+          "symmetry error",
+          "fractal dimension error",
+          "worst radius",
+          "worst texture",
+          "worst perimeter",
+          "worst area",
+          "worst smoothness",
+          "worst compactness",
+          "worst concavity",
+          "worst concave points",
+          "worst symmetry",
+          "worst fractal dimension"
+        ],
+        "path": "/Users/karan/Documents/machine-learning/auto-ml-adk/data/experiments/0743e49bc8cd/model_iter2.joblib",
+        "positive_label": "malignant",
+        "run_id": 2,
+        "strategy_level": 1,
+        "winner": "logistic_regression"
+      },
+      "status": "ok"
+    }
+  },
+  "planned_for_eval": 1,
+  "plans": [
+    {
+      "plan": "The majority-class baseline is below the target. Next pass adds interaction features and trains logistic regression and a random forest in parallel.",
+      "strategy_level": 1
+    }
+  ],
+  "raw_path": "/Users/karan/Documents/machine-learning/auto-ml-adk/data/experiments/0743e49bc8cd/raw.csv",
+  "session_id": "0743e49bc8cd",
+  "status": "completed",
+  "strategy_level": 1,
+  "target_met": true,
+  "tool_calls": 13,
+  "training_approved": true,
+  "training_run_id": 2,
+  "training_run_seq": 2,
+  "trajectory": [
+    "profile_quality",
+    "analyze_target",
+    "inspect_schema",
+    "clean_dataset",
+    "create_features",
+    "run_training",
+    "evaluate_model",
+    "record_improvement_plan",
+    "create_features",
+    "run_training",
+    "evaluate_model",
+    "recall_similar_experiments"
+  ],
+  "user_id": "local"
+}

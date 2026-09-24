@@ -1,0 +1,14 @@
+google-adk>=2.9.2
+litellm
+fastapi
+uvicorn
+python-multipart
+pandas
+scikit-learn
+joblib
+numpy
+pydantic
+pyyaml
+aiosqlite
+httpx
+pytest

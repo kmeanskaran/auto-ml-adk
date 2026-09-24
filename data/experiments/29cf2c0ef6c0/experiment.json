@@ -1,0 +1,202 @@
+{
+  "approve_training": false,
+  "best": null,
+  "blocked_tools": [
+    "run_analysis_snippet"
+  ],
+  "checkpoints": [
+    "stats"
+  ],
+  "current_stage": "stats",
+  "error": null,
+  "fault": null,
+  "history": [],
+  "id": "29cf2c0ef6c0",
+  "identity": "ml-engineer@local",
+  "mode": "staged",
+  "model_name": "scripted",
+  "notes": [],
+  "objective": {
+    "metric": "f1",
+    "target": 0.0,
+    "target_column": "churn",
+    "text": "Predict customer churn. Optimize for F1."
+  },
+  "pending_approval": null,
+  "phases": {
+    "analyze_target": {
+      "fingerprint": "/Users/karan/Documents/machine-learning/auto-ml-adk/data/experiments/29cf2c0ef6c0/raw.csv:19320:1790177134982075279",
+      "result": {
+        "classes": {
+          "0": 302,
+          "1": 98
+        },
+        "missing_target": 0,
+        "rows": 400,
+        "target": "churn"
+      },
+      "status": "ok"
+    },
+    "compile_research_brief": {
+      "fingerprint": "/Users/karan/Documents/machine-learning/auto-ml-adk/data/experiments/29cf2c0ef6c0/raw.csv:19320:1790177134982075279:research",
+      "result": {
+        "business_problem": "Predict customer churn. Optimize for F1.",
+        "class_balance": {
+          "0": 302,
+          "1": 98
+        },
+        "column_count": 10,
+        "missing_cells": 0,
+        "numeric_columns": [
+          "tenure_months",
+          "monthly_charges",
+          "total_charges",
+          "support_calls",
+          "senior",
+          "paperless",
+          "churn"
+        ],
+        "path": "/Users/karan/Documents/machine-learning/auto-ml-adk/data/experiments/29cf2c0ef6c0/statistical_report.md",
+        "rows": 400,
+        "technical_problem": "Train a classifier that predicts churn from the other columns. Optimize f1 to at least 0.0.",
+        "understanding": "The business asks: Predict customer churn. Optimize for F1.. The measurable outcome is `churn`. The other 9 columns are the inputs the model can use."
+      },
+      "status": "ok"
+    },
+    "frame_technical_spec": {
+      "fingerprint": "/Users/karan/Documents/machine-learning/auto-ml-adk/data/experiments/29cf2c0ef6c0/raw.csv:19320:1790177134982075279:spec",
+      "result": {
+        "business_problem": "Predict customer churn. Optimize for F1.",
+        "column_count": 10,
+        "metric": "f1",
+        "target_column": "churn",
+        "target_value": 0.0,
+        "task_type": "classification",
+        "technical_problem": "Train a classifier that predicts churn from the other columns. Optimize f1 to at least 0.0."
+      },
+      "status": "ok"
+    },
+    "inspect_schema": {
+      "fingerprint": "/Users/karan/Documents/machine-learning/auto-ml-adk/data/experiments/29cf2c0ef6c0/raw.csv:19320:1790177134982075279",
+      "result": {
+        "columns": [
+          {
+            "dtype": "str",
+            "missing": 0,
+            "name": "customer_id",
+            "unique": 400
+          },
+          {
+            "dtype": "int64",
+            "missing": 0,
+            "name": "tenure_months",
+            "unique": 71
+          },
+          {
+            "dtype": "float64",
+            "missing": 0,
+            "name": "monthly_charges",
+            "unique": 380
+          },
+          {
+            "dtype": "float64",
+            "missing": 0,
+            "name": "total_charges",
+            "unique": 399
+          },
+          {
+            "dtype": "str",
+            "missing": 0,
+            "name": "contract",
+            "unique": 3
+          },
+          {
+            "dtype": "str",
+            "missing": 0,
+            "name": "internet",
+            "unique": 3
+          },
+          {
+            "dtype": "int64",
+            "missing": 0,
+            "name": "support_calls",
+            "unique": 7
+          },
+          {
+            "dtype": "int64",
+            "missing": 0,
+            "name": "senior",
+            "unique": 2
+          },
+          {
+            "dtype": "int64",
+            "missing": 0,
+            "name": "paperless",
+            "unique": 2
+          },
+          {
+            "dtype": "int64",
+            "missing": 0,
+            "name": "churn",
+            "unique": 2
+          }
+        ],
+        "rows": 400
+      },
+      "status": "ok"
+    },
+    "profile_quality": {
+      "fingerprint": "/Users/karan/Documents/machine-learning/auto-ml-adk/data/experiments/29cf2c0ef6c0/raw.csv:19320:1790177134982075279",
+      "result": {
+        "constant_columns": [],
+        "duplicate_id_rows": 0,
+        "missing_by_column": {},
+        "missing_cells": 0,
+        "rows": 400
+      },
+      "status": "ok"
+    },
+    "write_business_brief": {
+      "fingerprint": "/Users/karan/Documents/machine-learning/auto-ml-adk/data/experiments/29cf2c0ef6c0/raw.csv:19320:1790177134982075279:business",
+      "result": {
+        "business_problem": "Predict customer churn. Optimize for F1.",
+        "feature_columns": [
+          "customer_id",
+          "tenure_months",
+          "monthly_charges",
+          "total_charges",
+          "contract",
+          "internet",
+          "support_calls",
+          "senior",
+          "paperless"
+        ],
+        "target_column": "churn",
+        "understanding": "The business asks: Predict customer churn. Optimize for F1.. The measurable outcome is `churn`. The other 9 columns are the inputs the model can use."
+      },
+      "status": "ok"
+    }
+  },
+  "plans": [],
+  "raw_path": "/Users/karan/Documents/machine-learning/auto-ml-adk/data/experiments/29cf2c0ef6c0/raw.csv",
+  "session_id": "29cf2c0ef6c0",
+  "sme_notes": [],
+  "stages": {
+    "product_manager": "done",
+    "researcher": "done"
+  },
+  "status": "awaiting_review",
+  "strategy_level": 0,
+  "target_met": false,
+  "tool_calls": 6,
+  "training_approved": true,
+  "trajectory": [
+    "frame_technical_spec",
+    "inspect_schema",
+    "profile_quality",
+    "analyze_target",
+    "write_business_brief",
+    "compile_research_brief"
+  ],
+  "user_id": "local"
+}

@@ -1,0 +1,14 @@
+{
+  "tool": "profile_quality",
+  "status": "running",
+  "strategy_level": 0,
+  "phases": [
+    "frame_technical_spec",
+    "inspect_schema"
+  ],
+  "trajectory": [
+    "frame_technical_spec",
+    "inspect_schema"
+  ],
+  "training_approved": true
+}

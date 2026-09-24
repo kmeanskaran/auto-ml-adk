@@ -1,0 +1,12 @@
+{
+  "tool": "analyze_target",
+  "status": "running",
+  "strategy_level": 0,
+  "phases": [
+    "profile_quality"
+  ],
+  "trajectory": [
+    "profile_quality"
+  ],
+  "training_approved": true
+}

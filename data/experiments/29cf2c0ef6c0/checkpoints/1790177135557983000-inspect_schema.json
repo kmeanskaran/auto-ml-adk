@@ -1,0 +1,12 @@
+{
+  "tool": "inspect_schema",
+  "status": "running",
+  "strategy_level": 0,
+  "phases": [
+    "frame_technical_spec"
+  ],
+  "trajectory": [
+    "frame_technical_spec"
+  ],
+  "training_approved": true
+}

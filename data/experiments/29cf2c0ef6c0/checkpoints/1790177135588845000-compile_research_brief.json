@@ -1,0 +1,20 @@
+{
+  "tool": "compile_research_brief",
+  "status": "running",
+  "strategy_level": 0,
+  "phases": [
+    "analyze_target",
+    "frame_technical_spec",
+    "inspect_schema",
+    "profile_quality",
+    "write_business_brief"
+  ],
+  "trajectory": [
+    "frame_technical_spec",
+    "inspect_schema",
+    "profile_quality",
+    "analyze_target",
+    "write_business_brief"
+  ],
+  "training_approved": true
+}

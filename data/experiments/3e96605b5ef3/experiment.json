@@ -1,0 +1,32 @@
+{
+  "approve_training": false,
+  "best": null,
+  "blocked_tools": [
+    "run_analysis_snippet"
+  ],
+  "error": null,
+  "fault": null,
+  "history": [],
+  "id": "3e96605b5ef3",
+  "identity": "ml-engineer@local",
+  "model_name": "ollama_chat/qwen3:4b",
+  "notes": [],
+  "objective": {
+    "metric": "f1",
+    "target": 0.75,
+    "target_column": "churn",
+    "text": "Predict customer churn. Optimize for F1."
+  },
+  "pending_approval": null,
+  "phases": {},
+  "plans": [],
+  "raw_path": "/Users/karan/Documents/machine-learning/auto-ml-adk/data/experiments/3e96605b5ef3/raw.csv",
+  "session_id": "3e96605b5ef3",
+  "status": "running",
+  "strategy_level": 0,
+  "target_met": false,
+  "tool_calls": 0,
+  "training_approved": true,
+  "trajectory": [],
+  "user_id": "local"
+}

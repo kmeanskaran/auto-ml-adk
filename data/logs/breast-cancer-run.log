@@ -1,0 +1,4 @@
+experiment: 0743e49bc8cd
+status: completed
+model: logistic_regression f1=0.9714285714285714
+EXIT:0
