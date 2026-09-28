@@ -1,0 +1,542 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ML Team</title>
+<style>
+  :root {
+    color-scheme: light;
+    --bg: #f4f4f2; --surface: #fcfcfb; --ink: #0b0b0b; --ink-2: #52514e; --ink-3: #8a8983; --line: #e6e5e0; --soft: #efeeea;
+    --accent: #2a78d6; --series-1: #2a78d6; --series-2: #eb6834; --series-3: #1baf7a;
+    --good: #0ca30c; --warn: #fab219; --bad: #d03b3b; --grid: #e6e5e0;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) { color-scheme: dark; --bg: #111110; --surface: #1a1a19; --ink: #fff; --ink-2: #c3c2b7; --ink-3: #8f8e87;
+      --line: #2e2e2b; --soft: #262624; --accent: #3987e5; --series-1: #3987e5; --series-2: #d95926; --series-3: #199e70; --grid: #2e2e2b; }
+  }
+  :root[data-theme="dark"] { color-scheme: dark; --bg: #111110; --surface: #1a1a19; --ink: #fff; --ink-2: #c3c2b7; --ink-3: #8f8e87;
+    --line: #2e2e2b; --soft: #262624; --accent: #3987e5; --series-1: #3987e5; --series-2: #d95926; --series-3: #199e70; --grid: #2e2e2b; }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  body { margin: 0; font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; background: var(--bg); color: var(--ink); }
+  button { font: inherit; cursor: pointer; border-radius: 8px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); padding: 7px 13px; }
+  button:disabled { opacity: .45; cursor: default; }
+  .primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .link { border: none; background: none; padding: 0; color: var(--ink-3); text-decoration: underline; }
+  input[type=text], textarea, select { font: inherit; padding: 8px 11px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--ink); width: 100%; }
+  textarea { resize: vertical; min-height: 60px; }
+  .muted { color: var(--ink-3); } .small { font-size: 12px; }
+  code { font: 12px ui-monospace, Menlo, monospace; background: var(--soft); padding: 2px 6px; border-radius: 6px; }
+
+  header { display: flex; align-items: center; gap: 12px; padding: 14px 24px; flex-wrap: wrap; }
+  header h1 { font-size: 17px; margin: 0; }
+  .status { display: flex; align-items: center; gap: 8px; color: var(--ink-2); }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ink-3); }
+  .dot.live { background: var(--accent); animation: pulse 1.3s infinite; } .dot.you { background: var(--warn); }
+  @keyframes pulse { 50% { opacity: .3; } }
+
+  .layout { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr); gap: 16px; padding: 0 24px 24px; max-width: 1280px; margin: 0 auto; }
+  @media (max-width: 900px) { .layout { grid-template-columns: 1fr; padding: 0 16px 16px; } header { padding: 14px 16px; } }
+  .card { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 18px; }
+  .card + .card { margin-top: 16px; }
+  .card-head select { width: auto; padding: 5px 9px; }
+  table.grid tr.picked td { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+  table.grid tr.clickable { cursor: pointer; }
+  .card-head { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
+  .card-head h2 { font-size: 15px; margin: 0; flex: 1; }
+
+  /* pipeline stages */
+  .step { display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 0 12px; padding: 12px 0; }
+  .step + .step { border-top: 1px solid var(--line); }
+  .icon { width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; font-weight: 700; font-size: 13px; background: var(--soft); color: var(--ink-3); }
+  .step.working .icon, .step.reviewing .icon { background: var(--accent); color: #fff; animation: pulse 1.3s infinite; }
+  .step.done .icon, .step.kept .icon { background: var(--good); color: #fff; }
+  .step.your_review .icon { background: var(--warn); color: #000; }
+  .step.discarded .icon { background: var(--bad); color: #fff; }
+  .step .title { font-weight: 600; } .step .who { color: var(--ink-3); font-weight: 400; font-size: 12px; margin-left: 6px; }
+  .step .state { color: var(--ink-3); font-size: 13px; }
+  .headline { margin: 4px 0 0; color: var(--ink-2); }
+  .receipt { margin: 6px 0 0; padding: 0; list-style: none; color: var(--ink-2); font-size: 13px; }
+  .receipt li::before { content: "· "; color: var(--ink-3); }
+  .problems { margin-top: 6px; font-size: 12px; color: var(--bad); }
+
+  details.more { margin-top: 8px; }
+  details.more > summary { cursor: pointer; color: var(--ink-2); font-size: 13px; list-style: none; user-select: none; }
+  details.more > summary::before { content: "›"; display: inline-block; width: 14px; transition: transform .15s; font-weight: 700; }
+  details.more[open] > summary::before { transform: rotate(90deg); }
+  details.more > summary::-webkit-details-marker { display: none; }
+  .detail-body { margin-top: 10px; padding: 12px; background: var(--bg); border-radius: 10px; display: grid; gap: 14px; }
+  .kpis { display: flex; gap: 18px; flex-wrap: wrap; }
+  .kpi b { display: block; font-size: 18px; font-weight: 650; } .kpi span { color: var(--ink-3); font-size: 12px; }
+  .scroll { overflow-x: auto; }
+  table.grid { border-collapse: collapse; width: 100%; font-size: 12px; }
+  table.grid th { text-align: left; color: var(--ink-3); font-weight: 500; border-bottom: 1px solid var(--line); padding: 4px 8px; white-space: nowrap; }
+  table.grid td { border-bottom: 1px solid var(--line); padding: 4px 8px; vertical-align: top; }
+  table.grid td.num, table.grid th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  table.grid tr.best td { font-weight: 600; }
+  .nowrap { white-space: nowrap; }
+  .pill { display: inline-block; font-size: 11px; padding: 1px 7px; border-radius: 99px; background: var(--soft); color: var(--ink-2); }
+  .pill.warn { background: color-mix(in srgb, var(--warn) 25%, transparent); }
+  .pill.good { background: color-mix(in srgb, var(--good) 20%, transparent); }
+
+  /* reviews */
+  .review { grid-column: 2; margin-top: 12px; border: 1px solid var(--warn); border-radius: 12px; padding: 14px; display: grid; gap: 10px; }
+  .review h4 { margin: 0; font-size: 12px; font-weight: 600; color: var(--ink-2); text-transform: uppercase; letter-spacing: .03em; }
+  .review ul { margin: 0; padding-left: 18px; font-size: 13px; }
+  .check { display: flex; gap: 8px; align-items: flex-start; font-size: 13px; padding: 3px 0; cursor: pointer; }
+  .check input { margin-top: 3px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chip { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line); border-radius: 99px; padding: 4px 11px; font-size: 13px; cursor: pointer; background: var(--surface); }
+  .chip:has(input:checked) { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+  .chip input { margin: 0; }
+  .actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .spacer { flex: 1; }
+  .facts { display: grid; grid-template-columns: auto 1fr; gap: 3px 14px; font-size: 13px; }
+  .facts dt { color: var(--ink-3); } .facts dd { margin: 0; }
+
+  /* production + registry */
+  .version { font-size: 28px; font-weight: 650; line-height: 1.1; }
+  .versions { display: grid; gap: 6px; margin-top: 8px; }
+  .vrow { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+  .vrow .name { font-weight: 600; width: 34px; }
+  .vrow button { padding: 3px 9px; font-size: 12px; }
+
+  /* analyst chat */
+  .msgs { max-height: 520px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px; }
+  .msg { padding: 8px 12px; border-radius: 12px; max-width: 94%; font-size: 13px; overflow-wrap: anywhere; }
+  .msg.you { align-self: flex-end; background: var(--accent); color: #fff; }
+  .msg.analyst { align-self: flex-start; background: var(--soft); width: 94%; }
+  .msg.error { color: var(--bad); align-self: center; }
+  .msg table { border-collapse: collapse; margin-top: 6px; font-size: 12px; }
+  .msg td, .msg th { border-bottom: 1px solid var(--line); padding: 2px 8px; text-align: left; }
+  .ask { display: flex; gap: 8px; }
+
+  /* charts */
+  .chart { position: relative; margin-top: 8px; }
+  .chart .ctitle { font-size: 12px; font-weight: 600; color: var(--ink-2); margin-bottom: 4px; }
+  .chart svg { display: block; width: 100%; height: auto; overflow: visible; }
+  .chart svg text { fill: var(--ink-3); font-size: 11px; font-family: inherit; }
+  .chart svg .value { fill: var(--ink-2); }
+  .chart .legend { display: flex; gap: 12px; font-size: 12px; color: var(--ink-2); margin-top: 4px; flex-wrap: wrap; }
+  .chart .legend i { display: inline-block; width: 12px; height: 3px; border-radius: 2px; vertical-align: middle; margin-right: 5px; }
+  .tip { position: absolute; pointer-events: none; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 5px 9px; font-size: 12px; box-shadow: 0 4px 14px rgba(0,0,0,.12); white-space: nowrap; z-index: 5; }
+  .tip b { font-weight: 650; }
+  .hit { fill: transparent; cursor: default; }
+  .hit:hover + .mark, .mark:hover { opacity: .8; }
+</style>
+</head>
+<body>
+<header>
+  <h1>ML Team</h1>
+  <span class="muted" id="subtitle"></span>
+  <div class="spacer"></div>
+  <div class="status"><span class="dot" id="dot"></span><span id="status">Ready</span></div>
+</header>
+
+<div class="layout">
+  <div>
+  <section class="card">
+    <div class="card-head">
+      <h2>Pipeline</h2>
+      <button class="primary" id="run">Run pipeline</button>
+    </div>
+    <div id="steps"></div>
+  </section>
+  <section class="card" id="library" hidden></section>
+  </div>
+
+  <aside>
+    <section class="card" id="production"></section>
+    <section class="card">
+      <div class="card-head"><h2>Ask the analyst</h2></div>
+      <div class="msgs" id="msgs"><div class="muted small">Questions about the data and this pipeline's results only, e.g. “cancel rate by market segment”.</div></div>
+      <div class="ask"><input type="text" id="question" placeholder="Ask about the data…"><button id="ask">Ask</button></div>
+    </section>
+  </aside>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
+const num = (v, d = 3) => v === null || v === undefined ? "—" : typeof v === "number" ? (Number.isInteger(v) ? (Math.abs(v) >= 10000 ? v.toLocaleString() : String(v)) : v.toFixed(d)) : esc(v);
+const STATE = { waiting: ["", "Waiting"], working: ["●", "Working"], reviewing: ["●", "Skeptic is reviewing"], your_review: ["✋", "Your turn"],
+  done: ["✓", "Done"], kept: ["✓", "Kept as candidate"], discarded: ["✕", "Discarded"] };
+const WORKING = { profile: "Analyst is reading the data", features: "Engineer is building features", model: "Engineer is training candidates" };
+let lastKey = "", view = null;
+// expanded <details>, kept across re-renders; #open=profile,model opens sections from a link
+const open = new Set(location.hash.startsWith("#open=") ? location.hash.slice(6).split(",") : []);
+const form = {};                 // unsent review inputs, kept across re-renders
+
+async function api(path, body) {
+  const res = await fetch(path, body ? {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)} : {});
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || res.statusText);
+  return res.json();
+}
+
+// ---------- charts: inline SVG, one hue per series in fixed order, hover tooltips -------------
+const SERIES = ["var(--series-1)", "var(--series-2)", "var(--series-3)"];
+function chart(spec) {
+  if (!spec || !spec.categories?.length) return "";
+  const id = "c" + Math.random().toString(36).slice(2, 8);
+  const body = spec.type === "hbar" ? hbar(spec, id) : spec.type === "line" ? line(spec, id) : vbar(spec, id);
+  const legend = spec.series.length > 1 ? `<div class="legend">${spec.series.map((s, i) => `<span><i style="background:${SERIES[i]}"></i>${esc(s.name)}</span>`).join("")}</div>` : "";
+  return `<div class="chart" id="${id}"><div class="ctitle">${esc(spec.title)}</div>${body}${legend}<div class="tip" hidden></div></div>`;
+}
+function extent(spec) {
+  const vals = spec.series.flatMap((s) => s.values).filter((v) => v !== null);
+  let [lo, hi] = spec.domain || [Math.min(0, ...vals), Math.max(...vals)];
+  if (hi === lo) hi = lo + 1;
+  if (!spec.domain) { const t = ticks(lo, hi), step = t[1] - t[0]; if (step > 0) hi = Math.ceil(hi / step - 1e-9) * step; }
+  return [lo, hi];
+}
+// Round tick steps (1, 2, 2.5, 5 × 10^k) so axes read 0, 25, 50 rather than 23.57.
+function ticks(lo, hi, n = 4) {
+  const raw = (hi - lo) / n, mag = 10 ** Math.floor(Math.log10(raw));
+  const step = [1, 2, 2.5, 5, 10].map((m) => m * mag).find((x) => x >= raw);
+  const out = [];
+  for (let t = Math.ceil(lo / step - 1e-9) * step; t <= hi + 1e-9; t += step) out.push(+t.toFixed(10));
+  return out;
+}
+function tipAttr(label, rows) { return `data-tip='${esc(JSON.stringify({label, rows}))}'`; }
+function hbar(spec, id) {
+  const cats = spec.categories, k = spec.series.length, [lo, hi] = extent(spec);
+  const W = spec.width || 560, left = Math.min(180, 12 + 6.2 * Math.max(...cats.map((c) => String(c).length))), right = 44;
+  const band = k > 1 ? 10 * k + 8 : 20, H = cats.length * band + 22, x = (v) => left + (W - left - right) * (v - lo) / (hi - lo);
+  let out = ticks(lo, hi).map((t) => `<line x1="${x(t)}" x2="${x(t)}" y1="0" y2="${H - 18}" stroke="var(--grid)"/><text x="${x(t)}" y="${H - 4}" text-anchor="middle">${+t.toFixed(2)}</text>`).join("");
+  cats.forEach((c, i) => {
+    const y0 = i * band;
+    out += `<text x="${left - 8}" y="${y0 + band / 2 + 4}" text-anchor="end">${esc(String(c).slice(0, 28))}</text>`;
+    const rows = spec.series.map((s, j) => [s.name, s.values[i], j]);
+    spec.series.forEach((s, j) => {
+      const v = s.values[i]; if (v === null) return;
+      const h = k > 1 ? 8 : 14, y = y0 + (band - (k > 1 ? 10 * k - 2 : h)) / 2 + (k > 1 ? j * 10 : 0), w = Math.max(1, x(v) - x(lo));
+      out += `<rect class="mark" x="${x(lo)}" y="${y}" width="${w}" height="${h}" rx="3" fill="${SERIES[j]}"/>`;
+      if (k === 1) out += `<text class="value" x="${x(lo) + w + 5}" y="${y + h - 3}">${+(+v).toFixed(3)}</text>`;
+    });
+    out += `<rect class="hit" x="0" y="${y0}" width="${W}" height="${band}" ${tipAttr(c, rows)}/>`;
+  });
+  return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(spec.title)}">${out}</svg>`;
+}
+function vbar(spec, id) {
+  const cats = spec.categories, k = spec.series.length, [lo, hi] = extent(spec);
+  const W = spec.width || 560, H = 220, left = 40, bottom = cats.length > 8 ? 56 : 24, top = 8, band = (W - left) / cats.length;
+  const y = (v) => top + (H - bottom - top) * (1 - (v - lo) / (hi - lo));
+  let out = ticks(lo, hi).map((t) => `<line x1="${left}" x2="${W}" y1="${y(t)}" y2="${y(t)}" stroke="var(--grid)"/><text x="${left - 6}" y="${y(t) + 4}" text-anchor="end">${+t.toFixed(2)}</text>`).join("");
+  const bw = Math.max(2, Math.min(28, (band - 4) / k - 2));
+  cats.forEach((c, i) => {
+    const cx = left + band * i + band / 2, rows = spec.series.map((s, j) => [s.name, s.values[i], j]);
+    spec.series.forEach((s, j) => {
+      const v = s.values[i]; if (v === null) return;
+      const bx = cx - (k * (bw + 2)) / 2 + j * (bw + 2), top_ = Math.min(y(v), y(Math.max(lo, 0))), h = Math.max(1, Math.abs(y(v) - y(Math.max(lo, 0))));
+      out += `<rect class="mark" x="${bx}" y="${top_}" width="${bw}" height="${h}" rx="3" fill="${SERIES[j]}"/>`;
+    });
+    const lbl = esc(String(c).slice(0, 14));
+    out += cats.length > 8 ? `<text transform="translate(${cx},${H - bottom + 12}) rotate(-40)" text-anchor="end">${lbl}</text>` : `<text x="${cx}" y="${H - 6}" text-anchor="middle">${lbl}</text>`;
+    out += `<rect class="hit" x="${cx - band / 2}" y="0" width="${band}" height="${H - bottom}" ${tipAttr(c, rows)}/>`;
+  });
+  return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(spec.title)}">${out}</svg>`;
+}
+function line(spec, id) {
+  const cats = spec.categories, [lo, hi] = extent(spec);
+  const W = spec.width || 560, H = 220, left = 40, bottom = cats.length > 10 ? 56 : 24, top = 8, step = (W - left - 10) / Math.max(1, cats.length - 1);
+  const x = (i) => left + i * step, y = (v) => top + (H - bottom - top) * (1 - (v - lo) / (hi - lo));
+  let out = ticks(lo, hi).map((t) => `<line x1="${left}" x2="${W}" y1="${y(t)}" y2="${y(t)}" stroke="var(--grid)"/><text x="${left - 6}" y="${y(t) + 4}" text-anchor="end">${+t.toFixed(2)}</text>`).join("");
+  spec.series.forEach((s, j) => {
+    const pts = s.values.map((v, i) => v === null ? null : `${x(i)},${y(v)}`).filter(Boolean).join(" ");
+    out += `<polyline points="${pts}" fill="none" stroke="${SERIES[j]}" stroke-width="2" stroke-linejoin="round"/>`;
+  });
+  const every = Math.ceil(cats.length / 10);
+  cats.forEach((c, i) => {
+    if (i % every === 0) out += cats.length > 10 ? `<text transform="translate(${x(i)},${H - bottom + 12}) rotate(-40)" text-anchor="end">${esc(String(c).slice(0, 14))}</text>` : `<text x="${x(i)}" y="${H - 6}" text-anchor="middle">${esc(String(c).slice(0, 14))}</text>`;
+    out += `<rect class="hit" x="${x(i) - step / 2}" y="0" width="${step}" height="${H - bottom}" ${tipAttr(c, spec.series.map((s, j) => [s.name, s.values[i], j]))}/>`;
+  });
+  return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(spec.title)}">${out}</svg>`;
+}
+document.addEventListener("pointermove", (e) => {
+  const hit = e.target.closest?.("[data-tip]");
+  document.querySelectorAll(".tip").forEach((t) => { if (!hit || !t.parentElement.contains(hit)) t.hidden = true; });
+  if (!hit) return;
+  const box = hit.closest(".chart"), tip = box.querySelector(".tip"), data = JSON.parse(hit.dataset.tip), r = box.getBoundingClientRect();
+  tip.replaceChildren();
+  const head = document.createElement("div"); head.textContent = data.label; head.className = "muted"; tip.append(head);
+  data.rows.forEach(([name, v, j]) => {
+    const row = document.createElement("div"), b = document.createElement("b"), key = document.createElement("i");
+    key.style.cssText = `display:inline-block;width:10px;height:3px;border-radius:2px;margin-right:6px;vertical-align:middle;background:${SERIES[j]}`;
+    b.textContent = v === null ? "—" : +(+v).toFixed(4); row.append(key, b, document.createTextNode(" " + name)); tip.append(row);
+  });
+  tip.hidden = false;
+  tip.style.left = Math.min(e.clientX - r.left + 12, r.width - tip.offsetWidth) + "px"; tip.style.top = (e.clientY - r.top + 12) + "px";
+});
+
+// ---------- markdown for analyst answers: bold and at most one small table ----------------
+function markdown(text) {
+  const lines = esc(text).split("\n"), out = [];
+  for (let i = 0; i < lines.length; i++) {
+    if (/^\s*\|/.test(lines[i])) {
+      const rows = [];
+      while (i < lines.length && /^\s*\|/.test(lines[i])) { if (!/^\s*\|\s*:?-/.test(lines[i])) rows.push(lines[i]); i++; }
+      i--;
+      out.push("<table>" + rows.map((r, n) => "<tr>" + r.trim().replace(/^\||\|$/g, "").split("|")
+        .map((c) => `<${n ? "td" : "th"}>${c.trim()}</${n ? "td" : "th"}>`).join("") + "</tr>").join("") + "</table>");
+    } else out.push(lines[i]);
+  }
+  return out.join("<br>").replace(/\*\*(.+?)\*\*/g, "<b>$1</b>").replace(/`([^`]+)`/g, "<code>$1</code>");
+}
+
+// ---------- stages ------------------------------------------------------------------------
+function more(key, label, html) {
+  if (!html) return "";
+  return `<details class="more" data-key="${key}" ${open.has(key) ? "open" : ""}><summary>${label}</summary><div class="detail-body">${html}</div></details>`;
+}
+function list(items, cls = "receipt") { return items?.length ? `<ul class="${cls}">${items.map((f) => `<li>${esc(f)}</li>`).join("")}</ul>` : ""; }
+
+function profileDetails(p) {
+  if (!p || !p.column_profiles) return "";
+  const t = p.target || {};
+  const kpis = `<div class="kpis"><div class="kpi"><b>${num(p.rows)}</b><span>rows</span></div><div class="kpi"><b>${num(p.columns)}</b><span>columns</span></div>
+    <div class="kpi"><b>${num(100 * t.positive_rate, 1)}%</b><span>${esc(t.column)} = 1</span></div><div class="kpi"><b>${num(p.duplicate_rows)}</b><span>duplicate rows</span></div></div>`;
+  const rows = p.column_profiles.map((c) => `<tr><td>${esc(c.name)}</td><td>${esc(c.kind)}</td><td class="num">${num(c.missing_pct, 1)}%</td><td class="num">${num(c.unique)}</td>
+    <td class="num">${num(c.signal_auc)}</td><td class="muted">${c.stats ? `${num(c.stats.min, 2)} … ${num(c.stats.max, 2)}` : (c.top || []).map(([v]) => esc(v)).join(", ")}</td></tr>`).join("");
+  return kpis + (p.charts || []).map(chart).join("") +
+    `<div class="scroll"><table class="grid"><tr><th>Column</th><th>Kind</th><th class="num">Missing</th><th class="num">Distinct</th><th class="num">Signal AUC</th><th>Range / top values</th></tr>${rows}</table></div>`;
+}
+
+function featureDetails(d) {
+  if (!d) return "";
+  const t = d.tables || {};
+  const kpis = `<div class="kpis">${["train", "valid", "test"].map((s) => t[s] ? `<div class="kpi"><b>${num(t[s].rows)}</b><span>${s} · ${num(100 * t[s].outcome_rate, 1)}% positive</span></div>` : "").join("")}
+    ${d.store ? `<div class="kpi"><b>${esc(d.store.view)}:${esc(d.store.version)}</b><span>feature store</span></div>` : ""}</div>`;
+  const split = d.split ? `<div class="small"><b>Split:</b> ${esc(d.split.method)} <span class="muted">— ${esc(d.split.reason)}</span></div>` : "";
+  const removed = Object.entries(d.rows_removed || {}), excluded = Object.entries(d.excluded_columns || {});
+  const extra = (removed.length ? `<div class="small"><b>Rows removed:</b> ${removed.map(([k, v]) => `${esc(k)} (${num(v)})`).join("; ")}</div>` : "")
+    + (excluded.length ? `<div class="small"><b>Excluded columns:</b> ${excluded.map(([k, v]) => `<code>${esc(k)}</code> ${esc(v)}`).join("; ")}</div>` : "");
+  const rows = (d.features || []).map((f) => `<tr><td><code>${esc(f.name)}</code></td><td>${esc(f.description)}</td><td class="muted">${esc((f.source || []).join(", "))}</td>
+    <td class="num">${num(f.null_pct, 1)}%</td><td class="num">${num(f.signal_auc)}</td><td>${f.known_at_prediction === "yes" ? "" : '<span class="pill warn">unclear</span>'}</td></tr>`).join("");
+  return kpis + split + extra + `<div class="scroll"><table class="grid"><tr><th>Feature</th><th>What it is</th><th>From</th><th class="num">Missing</th><th class="num">Signal AUC</th><th></th></tr>${rows}</table></div>`;
+}
+
+function leaderboard(lb) {
+  if (!lb) return "";
+  const cols = lb.metrics.map((m) => m.key), base = {model: "baseline", label: "Baseline (outcome rate)", ...lb.baseline};
+  const head = `<tr><th>Model</th>${lb.metrics.map((m) => `<th class="num">${esc(m.label)}${m.key === lb.metric ? " ★" : ""}</th>`).join("")}<th class="num">Threshold</th></tr>`;
+  const row = (r, split) => `<tr class="${r.model === lb.best ? "best" : ""}"><td class="nowrap">${esc(r.label)}</td>${cols.map((c) => `<td class="num">${num(r[split][c])}</td>`).join("")}<td class="num">${num(r.threshold, 2)}</td></tr>`;
+  const table = (split) => `<div class="small muted">${split === "valid" ? "Validation (used to choose)" : "Test (held out)"}</div><div class="scroll"><table class="grid">${head}
+    ${[...lb.rows, base].map((r) => row(r, split)).join("")}</table></div>`;
+  return comparison(lb) + table("valid") + table("test");
+}
+
+function comparison(lb) {
+  return lb.rows.length > 1 ? chart({type: "hbar", title: `${lb.metric_label} by model`, categories: lb.rows.map((r) => r.label),
+    series: [{name: "validation", values: lb.rows.map((r) => r.valid[lb.metric])}, {name: "test", values: lb.rows.map((r) => r.test[lb.metric])}]}) : "";
+}
+
+// The decision table: the chosen metric on both splits, then what production cares about.
+function candidates(lb) {
+  const m = lb.metric, lbl = esc(lb.metric_label);
+  const rows = lb.rows.map((r) => `<tr class="${r.model === form.model ? "best" : ""}"><td><input type="radio" name="pick" value="${esc(r.model)}" ${form.model === r.model ? "checked" : ""}></td>
+    <td class="nowrap">${esc(r.label)}${r.model === lb.best ? ' <span class="pill good">best</span>' : ""}</td><td class="num">${num(r.valid[m])}</td><td class="num">${num(r.test[m])}</td>
+    <td class="num">${num(r.test.roc_auc)}</td><td class="num">${num(r.test.cost_per_1000, 1)}</td><td class="num">${num(r.threshold, 2)}</td></tr>`).join("");
+  const b = lb.baseline;
+  return `<div class="scroll"><table class="grid"><tr><th></th><th>Model</th><th class="num">${lbl} valid</th><th class="num">${lbl} test</th><th class="num">ROC-AUC test</th><th class="num">Cost/1k test</th><th class="num">Threshold</th></tr>${rows}
+    <tr class="muted"><td></td><td>Baseline</td><td class="num">${num(b.valid[m])}</td><td class="num">${num(b.test[m])}</td><td class="num">${num(b.test.roc_auc)}</td><td class="num">${num(b.test.cost_per_1000, 1)}</td><td class="num">${num(b.threshold, 2)}</td></tr></table></div>`;
+}
+
+function featuresReview(s) {
+  const r = s.review || {};
+  const recs = (r.recommendations || []).map((t, i) => `<label class="check"><input type="checkbox" data-apply="${i}" ${(form.apply || []).includes(i) ? "checked" : ""}><span>${esc(t)}</span></label>`).join("");
+  const problems = s.problems?.length ? `<div class="problems">Still incomplete: ${s.problems.map(esc).join("; ")}. Continue is disabled until the engineer fixes it.</div>` : "";
+  return `<div class="review">
+    <h4>Skeptic · ${r.verdict === "pass" ? "looks sound" : r.verdict ? "has concerns" : "no review"}</h4>${list(r.findings, "")}
+    ${recs ? `<h4>Recommended changes — tick to send</h4><div>${recs}</div>` : ""}
+    <textarea id="fb-text" placeholder="Your feedback for the engineer: features to add, improve or remove…">${esc(form.text || "")}</textarea>${problems}
+    <div class="actions"><button class="primary" data-act="feedback">Send feedback to engineer</button>
+      <button data-act="continue" ${s.problems?.length ? "disabled" : ""}>Continue with these features</button><span class="spacer"></span>
+      <button class="link" data-act="discard">Discard run</button></div></div>`;
+}
+
+function planReview(s, cfg, store) {
+  const p = s.proposal || {}, opts = s.options;
+  if (!form.models) form.models = [...(p.models || [])];
+  if (!form.metric) form.metric = p.metric || "roc_auc";
+  const models = opts.models.map((m) => `<label class="chip"><input type="checkbox" data-model="${m.key}" ${form.models.includes(m.key) ? "checked" : ""}>${esc(m.label)}${(p.models || []).includes(m.key) ? ' <span class="muted small">proposed</span>' : ""}</label>`).join("");
+  const metrics = opts.metrics.map((m) => `<option value="${m.key}" ${form.metric === m.key ? "selected" : ""}>${esc(m.label)} — ${esc(m.about)}${m.key === p.metric ? " (proposed)" : ""}</option>`).join("");
+  return `<div class="review">
+    <dl class="facts"><dt>Target</dt><dd><code>${esc(cfg.target)}</code> = 1</dd><dt>Features</dt><dd>${store ? `${esc(store.view)}:${esc(store.version)} from the feature store` : esc(cfg.feature_view)}</dd>
+      <dt>Threshold</dt><dd>minimises cost: missed ${cfg.costs.missed} · false alarm ${cfg.costs.false_alarm}</dd>
+      ${p.reason ? `<dt>Engineer</dt><dd>${esc(p.reason)}</dd>` : ""}</dl>
+    <h4>Models to train and compare</h4><div class="chips">${models}</div>
+    <h4>Metric that picks the winner and decides promotion</h4><select id="plan-metric">${metrics}</select>
+    <textarea id="fb-text" placeholder="Optional notes for the engineer, e.g. “keep trees shallow”, “tune regularisation”…">${esc(form.text || "")}</textarea>
+    <div class="actions"><button class="primary" data-act="train">Confirm and train</button><span class="spacer"></span><button class="link" data-act="discard">Discard run</button></div></div>`;
+}
+
+function promoteReview(s) {
+  const r = s.review || {}, lb = s.leaderboard, live = s.live;
+  if (!form.model && lb) form.model = r.recommended_model || lb.best;
+  const pick = lb?.rows.find((x) => x.model === form.model) || lb?.rows[0];
+  let compare = "";
+  if (live && pick) {
+    const metric = lb.metric, a = pick.test[metric], b = live.test?.[metric], label = lb.metric_label;
+    compare = `<div class="small">Production is <b>${esc(live.version)}</b> (${esc(live.model)}): test ${esc(label)} ${num(b)} vs ${num(a)} for this candidate. <span class="muted">Different feature versions may use different test rows.</span></div>`;
+  } else if (!live) compare = `<div class="small muted">Nothing is in production yet.</div>`;
+  const recs = (r.recommendations || []).map((t, i) => `<label class="check"><input type="checkbox" data-apply="${i}" ${(form.apply || []).includes(i) ? "checked" : ""}><span>${esc(t)}</span></label>`).join("");
+  return `<div class="review">
+    <h4>Skeptic · ${r.verdict === "pass" ? "looks sound" : r.verdict ? "has concerns" : "no review"}${r.recommended_model ? ` · would promote ${esc(r.recommended_model)}` : ""}</h4>${list(r.findings, "")}
+    <h4>Pick the candidate</h4>${lb ? comparison(lb) + candidates(lb) : ""}${compare}
+    <div class="actions"><button class="primary" data-act="promote">Promote to production</button><button data-act="keep">Register as candidate</button></div>
+    <h4>Or send it back</h4>${recs ? `<div>${recs}</div>` : ""}
+    <textarea id="fb-text" placeholder="Feedback for the engineer, e.g. “add class weights”, “tune depth”…">${esc(form.text || "")}</textarea>
+    <div class="actions"><button data-act="retrain">Retrain with feedback</button><button data-act="replan">Change models or metric</button><span class="spacer"></span><button class="link" data-act="discard">Discard run</button></div></div>`;
+}
+
+function renderSteps(p) {
+  $("steps").innerHTML = p.stages.map((s, i) => {
+    let [icon, text] = STATE[s.state] || STATE.waiting;
+    if (s.state === "working") text = WORKING[s.key] || text;
+    if (s.state === "waiting") icon = i + 1;
+    let body = "";
+    if (s.headline) body += `<p class="headline">${esc(s.headline)}</p>`;
+    body += list(s.findings);
+    if (s.key === "profile") body += more("profile", "Data report", profileDetails(s.details));
+    if (s.key === "features") body += more("features", `Features${s.details?.features ? ` (${s.details.features.length})` : ""}`, featureDetails(s.details));
+    if (s.key === "model") {
+      body += more("model", "Leaderboard, all metrics", leaderboard(s.details));
+      if (s.problems?.length && s.state !== "working") body += `<div class="problems">${s.problems.map(esc).join("; ")}</div>`;
+    }
+    let review = "";
+    if (s.state === "your_review") review = s.key === "features" ? featuresReview(s) : s.key === "plan" ? planReview(s, p.config, p.stages[1].details?.store) : s.key === "promote" ? promoteReview(s) : "";
+    return `<div class="step ${s.state}"><div class="icon">${icon}</div><div><div class="title">${esc(s.label)}<span class="who">${esc(s.agent)}</span></div>
+      <div class="state">${text}</div>${body}</div>${review}</div>`;
+  }).join("");
+  bindReview(p);
+}
+
+function bindReview(p) {
+  document.querySelectorAll("details.more").forEach((d) => d.ontoggle = () => d.open ? open.add(d.dataset.key) : open.delete(d.dataset.key));
+  const text = $("fb-text"); if (text) text.oninput = () => form.text = text.value;
+  document.querySelectorAll("[data-apply]").forEach((b) => b.onchange = () => {
+    form.apply = [...document.querySelectorAll("[data-apply]:checked")].map((x) => +x.dataset.apply); });
+  document.querySelectorAll("[data-model]").forEach((b) => b.onchange = () => {
+    form.models = [...document.querySelectorAll("[data-model]:checked")].map((x) => x.dataset.model); });
+  document.querySelectorAll("input[name=pick]").forEach((b) => b.onchange = () => { form.model = b.value; lastKey = ""; render(view); });
+  const metric = $("plan-metric"); if (metric) metric.onchange = () => form.metric = metric.value;
+  document.querySelectorAll("[data-act]").forEach((b) => b.onclick = () => act(b.dataset.act, p.waiting_on));
+}
+
+async function act(choice, stage) {
+  const body = {choice, text: (form.text || "").trim(), apply: form.apply || []};
+  if (stage === "plan") { body.models = form.models || []; body.metric = form.metric; if (choice === "train" && !body.models.length) return alert("Pick at least one model."); }
+  if (stage === "promote") body.model = form.model || "";
+  if (choice === "feedback" && !body.text && !body.apply.length) return alert("Tick a recommendation or write your feedback.");
+  if (choice === "retrain" && !body.text && !body.apply.length) return alert("Tick a recommendation or write what to change.");
+  if (choice === "discard" && !confirm("Discard this run?")) return;
+  if (choice === "promote" && !confirm(`Put ${body.model} in production?`)) return;
+  try { await api("/team/api/pipeline/answer", body); for (const k in form) delete form[k]; } catch (e) { alert(e.message); }
+  lastKey = ""; poll();
+}
+
+// ---------- production + registry + feature store -----------------------------------------
+function renderProduction(reg, store) {
+  const prod = reg.production;
+  const live = prod ? `<div class="version">${esc(prod.version)}</div><div class="muted">${esc(prod.model || "")}</div>
+      <dl class="facts" style="margin-top:8px"><dt>${esc(prod.metric_label)} (test)</dt><dd>${num(prod.test[prod.metric])}</dd><dt>ROC-AUC (test)</dt><dd>${num(prod.test.roc_auc)}</dd>
+      <dt>Cost / 1,000</dt><dd>${num(prod.test.cost_per_1000, 1)}</dd><dt>Features</dt><dd>${prod.feature_view ? `${esc(prod.feature_view.view)}:${esc(prod.feature_view.version)}` : "—"}</dd>
+      <dt>Since</dt><dd>${esc(prod.promoted_at || prod.created_at || "")}</dd><dt>Endpoint</dt><dd><code>POST /predict</code></dd></dl>`
+    : `<div class="muted">No model in production yet. Run the pipeline and promote a model.</div>`;
+  const registry = reg.versions.length > 1 ? `<div class="small muted" style="margin-top:8px">${reg.versions.length} versions in the model library.</div>` : "";
+  const views = store.map((v) => `<div class="small"><b>${esc(v.view)}</b> · ${v.versions.map((x) => `${esc(x.version)} (${x.features} features, ${esc(x.created_at.slice(0, 10))})`).join(", ")}</div>`).join("");
+  const fstore = store.length ? more("store", "Feature store", views) : "";
+  $("production").innerHTML = `<div class="card-head"><h2>Production</h2></div>${live}${registry}${fstore}`;
+  document.querySelectorAll("details.more").forEach((d) => d.ontoggle = () => d.open ? open.add(d.dataset.key) : open.delete(d.dataset.key));
+}
+
+// ---------- model library: every kept version, compared on one metric ------------------------
+const library = { pick: "", metric: "" };
+function renderLibrary(reg) {
+  const box = $("library");
+  box.hidden = reg.versions.length < 2;
+  if (box.hidden) return;
+  const metrics = reg.metrics, prod = reg.production;
+  if (!library.metric) library.metric = prod?.metric || reg.versions[0].metric || "roc_auc";
+  const m = metrics.find((x) => x.key === library.metric) || metrics[0];
+  const scored = reg.versions.filter((v) => typeof v.test[m.key] === "number");
+  const best = scored.reduce((a, v) => !a || (m.higher_is_better ? v.test[m.key] > a.test[m.key] : v.test[m.key] < a.test[m.key]) ? v : a, null);
+  const extra = ["roc_auc", "pr_auc", "cost_per_1000"].filter((k) => k !== m.key);
+  if (!reg.versions.some((v) => v.version === library.pick)) library.pick = best?.version || reg.versions[0].version;
+  const rows = reg.versions.map((v) => `<tr class="clickable ${v.version === library.pick ? "picked" : ""}" data-pick="${esc(v.version)}">
+      <td><input type="radio" name="lib" ${v.version === library.pick ? "checked" : ""}></td>
+      <td class="nowrap"><b>${esc(v.version)}</b>${best && v.version === best.version ? ' <span class="pill warn">recommended</span>' : ""}</td>
+      <td><span class="pill ${v.status === "production" ? "good" : ""}">${esc(v.status)}</span></td>
+      <td class="nowrap">${esc(v.model || "—")}</td>
+      <td class="nowrap muted">${v.feature_view ? `${esc(v.feature_view.view)}:${esc(v.feature_view.version)}` : "—"}</td>
+      <td class="num"><b>${num(v.test[m.key])}</b></td>${extra.map((k) => `<td class="num">${num(v.test[k], k === "cost_per_1000" ? 1 : 3)}</td>`).join("")}
+      <td class="num">${num(v.threshold, 2)}</td>
+      <td class="muted nowrap">${esc((v.created_at || "").slice(0, 16).replace("T", " "))}</td></tr>`).join("");
+  const pick = reg.versions.find((v) => v.version === library.pick);
+  const live = pick.status === "production";
+  const why = best ? `<b>${esc(best.version)}</b> is recommended: ${m.higher_is_better ? "highest" : "lowest"} test ${esc(m.label)} (${num(best.test[m.key])}).` : "";
+  box.innerHTML = `<div class="card-head"><h2>Model library</h2><label class="small muted">Compare on</label>
+      <select id="lib-metric">${metrics.map((x) => `<option value="${x.key}" ${x.key === m.key ? "selected" : ""}>${esc(x.label)}</option>`).join("")}</select></div>
+    ${chart({type: "hbar", title: `Test ${m.label} by version`, categories: scored.map((v) => v.version), series: [{name: m.label, values: scored.map((v) => v.test[m.key])}]})}
+    <div class="scroll"><table class="grid"><tr><th></th><th>Version</th><th>Status</th><th>Model</th><th>Features</th><th class="num">${esc(m.label)} ★</th>
+      ${extra.map((k) => `<th class="num">${esc(metrics.find((x) => x.key === k).label.replace("Cost per 1,000", "Cost/1k"))}</th>`).join("")}<th class="num">Threshold</th><th>Created</th></tr>${rows}</table></div>
+    <div class="small" style="margin-top:8px">${why} <span class="muted">Versions built on different feature versions were tested on different rows, so treat small gaps with care.</span></div>
+    <div class="actions" style="margin-top:10px"><b>${esc(pick.version)}</b>
+      <button class="primary" id="lib-live" ${live ? "disabled" : ""}>${live ? "In production" : "Make live"}</button>
+      <button id="lib-remove" ${live ? "disabled" : ""}>Remove</button>
+      <span class="spacer"></span><code>POST /predict/${esc(pick.version)}</code></div>`;
+  $("lib-metric").onchange = (e) => { library.metric = e.target.value; renderLibrary(reg); };
+  box.querySelectorAll("[data-pick]").forEach((r) => r.onclick = () => { library.pick = r.dataset.pick; renderLibrary(reg); });
+  $("lib-live").onclick = async () => {
+    if (!confirm(`Serve ${pick.version} (${pick.model}) in production?`)) return;
+    try { await api(`/team/api/registry/${pick.version}/promote`, {}); } catch (e) { alert(e.message); } lastKey = ""; poll(); };
+  $("lib-remove").onclick = async () => {
+    if (!confirm(`Remove ${pick.version} from the library? It can no longer be served or made live.`)) return;
+    try { await api(`/team/api/registry/${pick.version}/remove`, {}); library.pick = ""; } catch (e) { alert(e.message); } lastKey = ""; poll(); };
+}
+
+function renderChat(chat) {
+  if (chat.messages.length) $("msgs").innerHTML = chat.messages.map((m) =>
+    `<div class="msg ${m.role}">${m.role === "analyst" ? markdown(m.text) + (m.charts || []).map((c) => chart({...c, width: 360})).join("") : esc(m.text)}</div>`).join("")
+    + (chat.status === "running" ? '<div class="msg analyst muted">Analysing…</div>' : "");
+  $("msgs").scrollTop = $("msgs").scrollHeight;
+  $("ask").disabled = chat.status === "running";
+}
+
+function statusLine(p) {
+  const working = p.stages.find((s) => s.state === "working" || s.state === "reviewing");
+  if (p.status === "running") return ["live", working ? (working.state === "reviewing" ? "Skeptic is reviewing…" : (WORKING[working.key] || "Working") + "…") : "Working…"];
+  if (p.status === "waiting") return ["you", { features: "Review the features", plan: "Confirm the training plan", promote: "Decide on promotion" }[p.waiting_on] || "Waiting for you"];
+  if (p.status === "error") return ["", "Run failed: " + p.error];
+  if (p.status === "done") return ["", "Run finished"];
+  return ["", "Ready"];
+}
+
+function render(v) {
+  const [dot, text] = statusLine(v.pipeline);
+  $("dot").className = "dot " + dot; $("status").textContent = text;
+  $("subtitle").textContent = `${v.pipeline.config.dataset} · predicts ${v.pipeline.config.target}`;
+  $("run").disabled = ["running", "waiting"].includes(v.pipeline.status);
+  renderSteps(v.pipeline); renderProduction(v.registry, v.feature_store); renderLibrary(v.registry); renderChat(v.chat);
+}
+
+async function poll() {
+  try {
+    const v = await api("/team/api/view"), key = JSON.stringify(v);
+    if (key === lastKey) return;
+    // never re-render under someone typing in a review
+    if (document.activeElement && ["fb-text", "question"].includes(document.activeElement.id) && lastKey && view && JSON.stringify(v.pipeline) === JSON.stringify(view.pipeline)) {
+      renderChat(v.chat); lastKey = key; view = v; return;
+    }
+    lastKey = key; view = v; render(v);
+  } catch (e) { console.error(e); }
+}
+$("run").onclick = async () => { try { await api("/team/api/pipeline/start", {}); } catch (e) { alert(e.message); } lastKey = ""; poll(); };
+const ask = async () => { const q = $("question").value.trim(); if (!q) return;
+  try { await api("/team/api/chat", {text: q}); $("question").value = ""; } catch (e) { alert(e.message); } lastKey = ""; poll(); };
+$("ask").onclick = ask; $("question").onkeydown = (e) => { if (e.key === "Enter") ask(); };
+poll(); setInterval(poll, 1500);
+</script>
+</body>
+</html>
