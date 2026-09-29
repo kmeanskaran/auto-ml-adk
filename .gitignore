@@ -234,3 +234,8 @@ registry/.staging-*
 /archive
 /feedback.txt
 /notebooks
+
+# Console state: which run and review are open, and the analyst chat (local only)
+runs/console.json
+runs/*.tmp
+runs/analysis/chat.json
