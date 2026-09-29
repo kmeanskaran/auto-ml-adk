@@ -40,10 +40,14 @@ uv sync                                        # install dependencies into .venv
 cp .env.example .env                           # local settings
 ```
 
-Put the Hotel Booking Demand CSV at `data/datasets/hotels/hotels.csv`, then split it
-into what the team sees and later production traffic:
+Download the [Hotel Booking Demand](https://github.com/rfordatascience/tidytuesday/tree/master/data/2020/2020-02-11)
+dataset (Antonio, Almeida & Nunes 2019, CC BY 4.0) and split it into what the team
+sees and later production traffic:
 
 ```bash
+mkdir -p data/datasets/hotels
+curl -sSfL -o data/datasets/hotels/hotels.csv \
+  "https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2020/2020-02-11/hotels.csv"
 uv run python scripts/make_environment.py      # writes data/lake/ and data/traffic/
 ```
 
