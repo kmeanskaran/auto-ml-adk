@@ -195,7 +195,6 @@ runs/                one folder per pipeline run (logs/ holds the trace);
 feature_store/       versioned feature views
 registry/            versioned models; production.json is what /predict serves
 tests/               unit, integration and eval tests
-archive/             first implementation and the earlier hotel example
 ```
 
 ## Development

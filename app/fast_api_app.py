@@ -25,6 +25,7 @@ from google.adk.runners import Runner
 
 from app.app_utils import services
 from app.app_utils.a2a import attach_a2a_routes
+from app.app_utils.reasoning_engine_adapter import attach_reasoning_engine_routes
 from app.harness import state_sync
 from app.harness.trace import setup_logging
 
@@ -84,6 +85,9 @@ app: FastAPI = get_fast_api_app(
 )
 app.include_router(console)
 app.include_router(serving)
+# Agent Runtime's reasoning_engine contract: the Cloud Console playground and Gemini
+# Enterprise call the agent through these routes.
+attach_reasoning_engine_routes(app)
 app.title = "ml-team"
 app.description = "API for interacting with the Agent ml-team"
 

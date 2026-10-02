@@ -252,3 +252,13 @@ frontend/*.tsbuildinfo
 
 # Design notes, setup log and article drafts: local only for now
 /docs/
+
+# Terraform: local state and per-person values
+.terraform/
+*.tfstate
+*.tfstate.*
+*.auto.tfvars
+tfplan
+
+# Backups made by scripts/nuke_gcp.sh
+/backups/

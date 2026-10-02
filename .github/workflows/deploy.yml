@@ -1,0 +1,100 @@
+# Checks every pull request and push; a push to main that passes them goes to production.
+#
+#   checks   lint, unit tests, console typecheck and build
+#   deploy   backend → Agent Runtime (agents-cli deploy), console → Cloud Run (IAP),
+#            then checks the deployed backend answers
+#
+# No keys: the deploy job signs in to Google Cloud through Workload Identity
+# Federation, which trusts only this repository's main branch
+# (deployment/terraform/ml-team-adk/ml_team.tf). The repository variables it reads
+# come from `terraform output github_variables`; see SETUP.md.
+
+name: deploy
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false # never stop a deploy halfway
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - name: Backend
+        run: |
+          uv sync --frozen
+          uvx ruff check app tests
+          uv run pytest tests/unit -q
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Console
+        working-directory: frontend
+        run: |
+          npm ci --no-audit --no-fund
+          npm run typecheck
+          npm run build
+
+  deploy:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+    needs: checks
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # Workload Identity Federation
+    env:
+      PROJECT: ${{ vars.GCP_PROJECT_ID }}
+      REGION: ${{ vars.GCP_REGION }}
+      AGENT_URL: https://${{ vars.GCP_REGION }}-aiplatform.googleapis.com/reasoningEngines/v1/projects/${{ vars.GCP_PROJECT_ID }}/locations/${{ vars.GCP_REGION }}/reasoningEngines/${{ vars.AGENT_ENGINE_ID }}/api
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.WIF_PROVIDER }}
+          service_account: ${{ vars.DEPLOYER_SA }}
+      - uses: google-github-actions/setup-gcloud@v2
+        with:
+          install_components: beta
+      - uses: astral-sh/setup-uv@v6
+
+      - name: Backend → Agent Runtime
+        run: |
+          uv tool install google-agents-cli==1.7.0
+          ENV="GOOGLE_GENAI_USE_VERTEXAI=true,GOOGLE_CLOUD_LOCATION=global,ML_STATE_BUCKET=${{ vars.STATE_BUCKET }},OTEL_TO_CLOUD=true"
+          if [ -n "${{ vars.ML_MODEL }}" ]; then ENV="$ENV,ML_MODEL=${{ vars.ML_MODEL }}"; fi
+          agents-cli deploy \
+            --project "$PROJECT" --region "$REGION" --no-confirm-project \
+            --service-account "${{ vars.APP_SA }}" \
+            --update-env-vars "$ENV" \
+            --labels "commit=${GITHUB_SHA::12}"
+
+      - name: Console → Cloud Run
+        run: |
+          gcloud beta run deploy ml-team-console --quiet \
+            --project "$PROJECT" --region "$REGION" \
+            --source frontend \
+            --service-account "${{ vars.CONSOLE_SA }}" \
+            --set-env-vars "BACKEND_URL=$AGENT_URL" \
+            --no-allow-unauthenticated --iap \
+            --min-instances 0 --max-instances 2
+
+      - name: Check the deployed backend answers
+        run: |
+          TOKEN="$(gcloud auth print-access-token)"
+          for attempt in 1 2 3 4 5 6; do
+            code="$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $TOKEN" "$AGENT_URL/api/view")"
+            echo "attempt $attempt: /api/view → $code"
+            [ "$code" = 200 ] && exit 0
+            sleep 20 # the agent may be starting from zero
+          done
+          exit 1
