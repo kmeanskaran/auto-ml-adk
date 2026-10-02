@@ -8,6 +8,11 @@
 .gitignore
 .gcloudignore
 
+# data/ is gitignored, but the image needs the loan dataset config.yml names.
+!/data/
+/data/*
+!/data/lending-loan/
+
 # Extensions are vendored into the repository and committed, but the deployed
 # agent never reads them: `agents-cli install` restores them from the pins in
 # agents-cli-extensions.yaml, and their code runs on the developer's machine.

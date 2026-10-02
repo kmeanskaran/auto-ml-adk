@@ -1,4 +1,5 @@
-"""HTTP routes: the console under /team, and served models under /predict."""
+"""HTTP API: the console's JSON API under /api (the Next.js frontend in frontend/
+calls it), and served models under /predict."""
 
 from __future__ import annotations
 
@@ -7,21 +8,27 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
-from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from app import settings
-from app.harness import catalog, contracts, feature_store, registry
+from app.harness import (
+    catalog,
+    contracts,
+    feature_store,
+    history,
+    models,
+    registry,
+    trace,
+)
 from app.harness.project import RUNS, read_json
-from app.ui.runs import CHAT, PIPELINE
+from app.ui.runs import CHAT, PIPELINE, clear
 
-console = APIRouter(prefix="/team", tags=["console"])
+console = APIRouter(prefix="/api", tags=["console"])
 serving = APIRouter(tags=["serving"])
-PAGE = Path(__file__).parent / "static" / "index.html"
 CHOICES = {
     "features": ("continue", "feedback", "discard"),
     "plan": ("train", "discard"),
-    "promote": ("promote", "keep", "retrain", "replan", "discard"),
+    "promote": ("promote", "keep", "retrain", "features", "replan", "discard"),
 }
 
 
@@ -38,25 +45,87 @@ class Question(BaseModel):
     text: str
 
 
+class ModelChoice(BaseModel):
+    model: str
+    thinking: str
+
+
+class Start(BaseModel):
+    feedback: str = Field("", max_length=4000)  # optional: what the team should rethink
+
+
 class Rows(BaseModel):
     rows: list[dict[str, Any]]
 
 
-@console.get("", include_in_schema=False)
-def page() -> FileResponse:
-    return FileResponse(PAGE)
-
-
-@console.post("/api/pipeline/start")
-async def start_pipeline() -> dict:
+@console.post("/pipeline/start")
+async def start_pipeline(start: Start | None = None) -> dict:
     try:
-        await PIPELINE.start()
+        await PIPELINE.start((start or Start()).feedback)
     except RuntimeError as exc:
         raise HTTPException(409, str(exc)) from exc
     return {"status": PIPELINE.status}
 
 
-@console.post("/api/pipeline/answer")
+@console.post("/pipeline/pause")
+def pause_pipeline() -> dict:
+    """Hold the run after the model call or script in flight; nothing runs until resumed."""
+    try:
+        PIPELINE.pause_run()
+    except RuntimeError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return {"status": PIPELINE.status}
+
+
+@console.post("/pipeline/resume")
+def resume_pipeline() -> dict:
+    try:
+        PIPELINE.resume_run()
+    except RuntimeError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return {"status": PIPELINE.status}
+
+
+@console.post("/pipeline/restart")
+async def restart_pipeline() -> dict:
+    """Stop the run wherever it is and start a new one with the same feedback."""
+    try:
+        await PIPELINE.restart()
+    except RuntimeError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return {"status": PIPELINE.status}
+
+
+@console.post("/model")
+def choose_model(choice: ModelChoice) -> dict:
+    """The Gemini model and thinking level the team uses from its next call on."""
+    if not models.on_gemini():
+        raise HTTPException(
+            409, f"The team runs on {models.base()}, not Gemini (ML_MODEL)."
+        )
+    try:
+        models.choose(choice.model, choice.thinking)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    trace.note(
+        trace.PIPELINE,
+        f"⚙ model set to {choice.model}, thinking {choice.thinking}",
+        kind="step",
+    )
+    return models.view()
+
+
+@console.post("/clear")
+async def clear_everything() -> dict:
+    """Cold start: remove every run, model, feature view, session and chat message."""
+    try:
+        await clear()
+    except RuntimeError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return {"status": PIPELINE.status}
+
+
+@console.post("/pipeline/answer")
 async def answer_review(answer: Answer) -> dict:
     stage = (PIPELINE.pause.payload.get("stage") if PIPELINE.pause else None) or ""
     if answer.choice not in CHOICES.get(stage, ()):
@@ -81,7 +150,7 @@ async def answer_review(answer: Answer) -> dict:
     return {"status": PIPELINE.status}
 
 
-@console.post("/api/registry/{version}/promote")
+@console.post("/registry/{version}/promote")
 def make_live(version: str) -> dict:
     """Roll production forward or back to any registered version."""
     try:
@@ -90,7 +159,7 @@ def make_live(version: str) -> dict:
         raise HTTPException(404, str(exc)) from exc
 
 
-@console.post("/api/registry/{version}/remove")
+@console.post("/registry/{version}/remove")
 def remove_version(version: str) -> dict:
     """Take a version out of the model library (never the production one)."""
     try:
@@ -101,7 +170,7 @@ def remove_version(version: str) -> dict:
         raise HTTPException(409, str(exc)) from exc
 
 
-@console.post("/api/chat")
+@console.post("/chat")
 async def ask_analyst(question: Question) -> dict:
     if not question.text.strip():
         raise HTTPException(422, "Ask a question.")
@@ -112,12 +181,21 @@ async def ask_analyst(question: Question) -> dict:
     return {"status": CHAT.status}
 
 
-@console.get("/api/view")
+@console.get("/runs")
+def past_runs(limit: int = 20) -> dict:
+    """Finished runs, newest first: what each tried, scored and decided."""
+    return {"runs": history.runs()[: max(1, min(limit, 200))]}
+
+
+@console.get("/view")
 def view() -> dict:
     return {
         "pipeline": _pipeline_view(),
         "registry": _registry_view(),
-        "feature_store": feature_store.summary(),
+        "feature_store": _feature_store_view(),
+        "history": [_run_card(r) for r in history.runs()[:20]],
+        "metrics": catalog.describe(),
+        "model": models.view(),
         "chat": {"status": CHAT.status, "messages": CHAT.messages[-30:]},
     }
 
@@ -166,7 +244,17 @@ def _pipeline_view() -> dict:
         "error": PIPELINE.error,
         "run": PIPELINE.project,
         "waiting_on": pause,
+        "why": (PIPELINE.pause.payload.get("why") if PIPELINE.pause else "") or "",
+        "activity": trace.activity(run) if run else [],
+        "brief": files.json(history.BRIEF),
+        "next_builds_on": history.builds_on(config.dataset),
         "config": {
+            "goal": config.goal,
+            "record": config.record,
+            "positive": config.positive,
+            "false_alarm": config.false_alarm,
+            "ask_human": list(config.ask_human),
+            "self_review_rounds": config.self_review_rounds,
             "dataset": config.dataset,
             "target": config.target,
             "feature_view": config.feature_view,
@@ -185,7 +273,9 @@ class _Files:
         self.run = run
 
     def json(self, relative: str) -> dict | None:
-        return read_json(self.run / relative) if self.run else None
+        # Agents write these files mid-stage; until they hold the agreed shape, show nothing.
+        data = read_json(self.run / relative) if self.run else None
+        return data if isinstance(data, dict) else None
 
     def decisions(self) -> list[dict]:
         path = self.run / "decisions.jsonl" if self.run else None
@@ -219,6 +309,7 @@ def _profile(files: _Files) -> dict:
         "state": state,
         "headline": (summary or {}).get("headline", ""),
         "findings": (summary or {}).get("findings", []),
+        "charts": (summary or {}).get("charts", []),
         "details": profile,
     }
 
@@ -235,15 +326,29 @@ def _features(files: _Files, pause: str, decisions: list[dict]) -> dict:
     )
     report = files.json("reports/features.json") or {}
     stats = files.json("reports/feature_stats.json") or {}
+    declared = report.get("features")
+    measured = stats.get("features")
+    measured = measured if isinstance(measured, dict) else {}
     features = [
-        {"name": name, **meta, **(stats.get("features") or {}).get(name, {})}
-        for name, meta in (report.get("features") or {}).items()
+        {
+            "name": name,
+            **meta,
+            **(measured.get(name) if isinstance(measured.get(name), dict) else {}),
+        }
+        for name, meta in (declared.items() if isinstance(declared, dict) else [])
+        if isinstance(meta, dict)
     ]
     return {
         "key": "features",
         "label": "Engineer features",
         "agent": "Engineer · Skeptic",
         "state": state,
+        "decided_by": last.get("by", ""),
+        "rounds": sum(
+            1
+            for d in decisions
+            if d.get("stage") == "features" and d.get("action") == "feedback"
+        ),
         "findings": (files.json("receipts/features.json") or {}).get("findings", []),
         "details": {
             "features": features,
@@ -275,12 +380,13 @@ def _plan(files: _Files, pause: str, decisions: list[dict]) -> dict:
     proposal = files.json("reports/plan_proposal.json") or {}
     return {
         "key": "plan",
-        "label": "Training plan",
-        "agent": "You",
+        "label": "Choose models",
+        "agent": "Team · You",
         "state": state,
+        "decided_by": last.get("by", ""),
         "findings": [
             f"Models: {', '.join(catalog.models().get(m, m) for m in plan['models'])}",
-            f"Metric: {catalog.METRICS[plan['metric']].label}",
+            f"Winner picked by: {catalog.describe()[plan['metric']]['plain']}",
         ]
         if plan and state == "done"
         else [],
@@ -300,7 +406,7 @@ def _model(files: _Files, pause: str) -> dict:
         state = "done"
     return {
         "key": "model",
-        "label": "Train and evaluate",
+        "label": "Train and test",
         "agent": "Engineer · Skeptic",
         "state": state,
         "findings": (receipt or {}).get("findings", []),
@@ -321,15 +427,18 @@ def _promote(files: _Files, pause: str, decisions: list[dict]) -> dict:
     )
     findings = []
     if action == "promote":
-        findings = [f"{last['version']} ({last['model']}) is live at POST /predict"]
+        findings = [
+            f"{last['version']} ({last['model']}) is live; POST /predict uses it"
+        ]
     elif action == "keep":
-        findings = [f"{last['version']} ({last['model']}) registered as a candidate"]
+        findings = [f"{last['version']} ({last['model']}) is kept in the model library"]
     live = registry.production()
     return {
         "key": "promote",
-        "label": "Promote",
-        "agent": "You",
+        "label": "Go live",
+        "agent": "Team · You",
         "state": state,
+        "decided_by": last.get("by", ""),
         "findings": findings,
         "review": files.json("reviews/model.json"),
         "leaderboard": _leaderboard(files.json("reports/evaluation.json")),
@@ -358,6 +467,9 @@ def _leaderboard(evaluation: dict | None) -> dict | None:
         "metric_label": catalog.METRICS[metric].label,
         "best": evaluation["best"],
         "baseline": evaluation["baseline"],
+        "warnings": evaluation.get("warnings", []),
+        "protocol": evaluation.get("protocol", ""),
+        "chosen_on": evaluation.get("chosen_on", "valid"),
         "rows": rows,
         "metrics": [{"key": k, "label": m.label} for k, m in catalog.METRICS.items()],
     }
@@ -378,12 +490,59 @@ def _version_card(version: dict) -> dict:
         if metric in catalog.METRICS
         else metric,
         "test": version.get("test") or {},
+        "baseline_test": version.get("baseline_test") or {},
         "threshold": version.get("threshold"),
         "feature_view": version.get("feature_view"),
         "run": version.get("run"),
         "created_at": version.get("created_at") or version.get("promoted_at"),
         "promoted_at": version.get("promoted_at"),
     }
+
+
+def _feature_store_view() -> list[dict]:
+    """Every feature view version with its features; which models use it, which
+    features come from a protected attribute (fairness.attributes)."""
+    protected = set(settings.load().protected)
+    used: dict[tuple[str, str], list[dict]] = {}
+    for v in registry.versions():
+        ref = v.get("feature_view") or {}
+        if v.get("status") != "removed" and ref.get("view"):
+            used.setdefault((ref["view"], ref.get("version") or ""), []).append(
+                {"version": v["version"], "status": v.get("status")}
+            )
+    views = feature_store.summary()
+    for view in views:
+        for version in view["versions"]:
+            models = used.get((view["view"], version["version"]), [])
+            version["used_by"] = models
+            version["live"] = any(m["status"] == "production" for m in models)
+            for column in version["columns"]:
+                column["protected"] = sorted(set(column["source"]) & protected)
+    return views
+
+
+def _run_card(record: dict) -> dict:
+    keep = (
+        "run",
+        "at",
+        "outcome",
+        "feature_view",
+        "features",
+        "models",
+        "metric",
+        "feedback",
+        "builds_on",
+    )
+    card = {k: record.get(k) for k in keep}
+    card.update(
+        best=catalog.models().get(record.get("best") or "", record.get("best")),
+        test_score=record.get("test_score"),
+        version=record.get("version"),
+        human_overrides=record.get("human_overrides", 0),
+        decisions=len(record.get("decisions") or []),
+        warnings=len(record.get("warnings") or []),
+    )
+    return card
 
 
 def _registry_view() -> dict:

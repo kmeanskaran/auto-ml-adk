@@ -25,8 +25,9 @@ import time
 from pathlib import Path
 from typing import Any
 
+from app.harness import project
 from app.harness.environment import ProjectEnvironment
-from app.harness.project import APP_ROOT, TRAFFIC, read_json, write_json
+from app.harness.project import APP_ROOT, read_json, write_json
 
 STORE = Path(os.environ.get("ML_FEATURE_STORE_ROOT", APP_ROOT / "feature_store"))
 SPLITS = ("train", "valid", "test")
@@ -34,7 +35,7 @@ STAGED = "features"  # run-folder subfolder holding materialized tables before a
 _lock = threading.Lock()
 
 MATERIALIZE = r"""
-import importlib.util, json, os
+import importlib.util, json, os, tempfile
 import numpy as np
 import pandas as pd
 
@@ -55,6 +56,7 @@ def signal(x, y):
 problems, stats, rows = [], {}, {}
 report = json.load(open("reports/features.json"))
 outcome, key = report["outcome_column"], report.get("entity_key") or None
+ordered = (report.get("split") or {}).get("ordered_by") or None
 declared = list(report["features"])
 spec = importlib.util.spec_from_file_location("stage_features", "src/features.py")
 module = importlib.util.module_from_spec(spec)
@@ -80,8 +82,13 @@ try:
         raw = pd.read_parquet(f"artifacts/{split}.parquet")
         if outcome not in raw.columns:
             raise ValueError(f"artifacts/{split}.parquet has no outcome column {outcome!r}")
+        values = set(pd.unique(raw[outcome]).tolist())
+        if raw[outcome].isna().any() or not values <= {0, 1}:
+            raise ValueError(f"outcome column {outcome!r} in artifacts/{split}.parquet must hold only 0 and 1, found {sorted(map(str, values))[:5]}")
         if key and key not in raw.columns:
             raise ValueError(f"entity_key {key!r} is not a column of artifacts/{split}.parquet")
+        if ordered and ordered not in raw.columns:
+            raise ValueError(f"split.ordered_by {ordered!r} is not a column of artifacts/{split}.parquet")
         y = raw[outcome].reset_index(drop=True)
         table = transform(raw.drop(columns=[outcome]), split)
         if key:
@@ -100,7 +107,21 @@ try:
                 stats[name] = {"dtype": str(col.dtype), "null_pct": round(100 * float(col.isna().mean()), 2),
                                "unique": int(col.nunique(dropna=True)), "signal_auc": signal(col, y)}
     sample = pd.read_csv(os.environ["SMOKE_SAMPLE"], nrows=50)
-    transform(sample, "production-shaped records")
+    sample = sample[[c for c in sample.columns if not str(c).startswith("Unnamed")]]
+    # Served, build() runs alone: from the feature store and the serving bundle, with
+    # none of this project's files beside it. Run it that way here.
+    here, source = os.getcwd(), os.path.abspath("src/features.py")
+    os.chdir(tempfile.mkdtemp())
+    try:
+        spec = importlib.util.spec_from_file_location("served_features", source)
+        served = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(served)
+        build = served.build
+        transform(sample, "production-shaped records")
+    except OSError as exc:
+        raise RuntimeError(f"build() read a file ({exc}). It is served alone, without reports/ or any other project file: write what it needs (column lists, mappings) into src/features.py itself.") from exc
+    finally:
+        os.chdir(here)
 except Exception as exc:
     problems.append(f"{type(exc).__name__}: {exc}")
 print(json.dumps({"problems": problems, "stats": stats, "tables": rows}))
@@ -109,12 +130,12 @@ print(json.dumps({"problems": problems, "stats": stats, "tables": rows}))
 
 async def materialize(run: Path) -> list[str]:
     """Run the stage's build() over its tables into run/features/. Returns problems."""
-    batches = sorted(p for p in TRAFFIC.glob("*.csv") if not p.stem.endswith("-labels"))
-    if not batches:
-        return ["no production sample available in data/traffic"]
+    sample = project.traffic_file()
+    if sample is None:
+        return ["no production sample available: set traffic in config/config.yml"]
     (run / ".home").mkdir(exist_ok=True)
     (run / ".home" / "materialize.py").write_text(MATERIALIZE, encoding="utf-8")
-    result = await ProjectEnvironment(run, {"SMOKE_SAMPLE": str(batches[0])}).execute(
+    result = await ProjectEnvironment(run, {"SMOKE_SAMPLE": str(sample)}).execute(
         f"{shlex.quote(sys.executable)} .home/materialize.py", timeout=900
     )
     lines = [line for line in result.stdout.splitlines() if line.startswith("{")]
@@ -175,12 +196,34 @@ def register(run: Path, view: str) -> dict[str, Any]:
             json.dumps(definition, indent=2), encoding="utf-8"
         )
         staging.rename(STORE / view / f"v{number}")
+        freeze(STORE / view / f"v{number}")
     return definition
 
 
+def freeze(folder: Path) -> None:
+    """Make a registered version read-only: agents' scripts read FEATURE_DIR, and a
+    script that tries to write there fails instead of changing a frozen version."""
+    for path in sorted(folder.rglob("*"), reverse=True):
+        path.chmod(0o555 if path.is_dir() else 0o444)
+    folder.chmod(0o555)
+
+
 def versions(view: str) -> list[dict[str, Any]]:
-    found = [read_json(p / "definition.json") for p in (STORE / view).glob("v*")]
-    return sorted((v for v in found if v), key=lambda v: v["number"])
+    """Registered versions, oldest first. A definition.json without the harness's
+    fields (overwritten by hand or by a script) is skipped, never trusted."""
+    found = [_definition(p) for p in (STORE / view).glob("v*")]
+    return sorted(
+        (v for v in found if v and isinstance(v.get("number"), int)),
+        key=lambda v: v["number"],
+    )
+
+
+def _definition(folder: Path) -> dict[str, Any] | None:
+    try:
+        data = read_json(folder / "definition.json")
+    except (OSError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
 
 
 def path(view: str, version: str) -> Path:
@@ -201,6 +244,21 @@ def summary() -> list[dict[str, Any]]:
                     "created_at": v["created_at"],
                     "run": v["run"],
                     "features": len(v.get("features") or {}),
+                    "split": (v.get("split") or {}).get("method"),
+                    "tables": v.get("tables") or {},
+                    "excluded_columns": v.get("excluded_columns") or {},
+                    "columns": [
+                        {
+                            "name": name,
+                            "description": meta.get("description", ""),
+                            "source": meta.get("source") or [],
+                            "dtype": meta.get("dtype"),
+                            "null_pct": meta.get("null_pct"),
+                            "signal_auc": meta.get("signal_auc"),
+                            "known_at_prediction": meta.get("known_at_prediction"),
+                        }
+                        for name, meta in (v.get("features") or {}).items()
+                    ],
                 }
                 for v in reversed(versions(view))
             ],

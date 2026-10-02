@@ -1,17 +1,16 @@
-"""Split the hotel bookings into what the team sees and later production traffic.
+"""Split the loan applications into what the team sees and later production traffic.
 
 Run once, before any agent:
 
     uv run python scripts/make_environment.py
 
-- data/lake/hotel_bookings.csv   bookings arriving Jul 2015 - Dec 2016, every column
-- data/traffic/2017-MM.csv       bookings arriving in 2017, one file per month, as
-                                 they would reach the model at booking time: no
-                                 label and no reservation outcome columns
-- data/traffic/2017-MM-labels.csv  the true outcome, released a month later
+- data/lake/loan_applications.csv    labelled applications (Loan_Status Y/N), every column
+- data/traffic/applications-001.csv  new applications as they reach the model when the
+                                     form is submitted: same columns, no Loan_Status
 
-The split is by arrival date, so traffic is real later data and any drift in it
-is real, not injected.
+The source is the Loan Prediction dataset (data/datasets/lending-loan): train.csv is
+labelled, test.csv is not, so it plays the part of production traffic. Nothing is
+cleaned or encoded here: that is the team's job.
 """
 
 from __future__ import annotations
@@ -22,43 +21,37 @@ from pathlib import Path
 import pandas as pd
 
 ROOT = Path(__file__).resolve().parents[1] / "data"
-RAW = ROOT / "datasets" / "hotels" / "hotels.csv"
+SOURCE = ROOT / "datasets" / "lending-loan"
 LAKE = ROOT / "lake"
 TRAFFIC = ROOT / "traffic"
+LABEL = "Loan_Status"
 
-LABEL = "is_canceled"
-# Written when the stay ends or the booking is cancelled, so absent at booking time.
-OUTCOME_COLUMNS = ["reservation_status", "reservation_status_date"]
-CUTOFF_YEAR = 2017
+
+def read(path: Path) -> pd.DataFrame:
+    """The raw file as text, without the unnamed index column some exports carry."""
+    frame = pd.read_csv(path, dtype=str, keep_default_na=False)
+    return frame.loc[:, ~frame.columns.str.startswith("Unnamed")]
 
 
 def main() -> None:
-    raw = pd.read_csv(RAW, dtype=str, keep_default_na=False)
-    raw.insert(0, "booking_id", [f"B{i:06d}" for i in range(1, len(raw) + 1)])
-    arrival = pd.to_datetime(
-        raw["arrival_date_year"] + "-" + raw["arrival_date_month"] + "-01",
-        format="%Y-%B-%d",
-    )
-    history = raw[arrival.dt.year < CUTOFF_YEAR]
-    future = raw[arrival.dt.year >= CUTOFF_YEAR]
+    labelled, unlabelled = read(SOURCE / "train.csv"), read(SOURCE / "test.csv")
+    missing = set(labelled.columns) - {LABEL} - set(unlabelled.columns)
+    if missing:
+        raise SystemExit(
+            f"test.csv lacks columns the model will need: {sorted(missing)}"
+        )
 
     for folder in (LAKE, TRAFFIC):
         shutil.rmtree(folder, ignore_errors=True)
         folder.mkdir(parents=True)
-    history.to_csv(LAKE / "hotel_bookings.csv", index=False)
+    labelled.to_csv(LAKE / "loan_applications.csv", index=False)
+    unlabelled[[c for c in labelled.columns if c != LABEL]].to_csv(
+        TRAFFIC / "applications-001.csv", index=False
+    )
 
-    months = arrival[future.index].dt.strftime("%Y-%m")
-    for month in sorted(months.unique()):
-        batch = future[months == month]
-        batch.drop(columns=[LABEL, *OUTCOME_COLUMNS]).to_csv(
-            TRAFFIC / f"{month}.csv", index=False
-        )
-        batch[["booking_id", LABEL]].to_csv(
-            TRAFFIC / f"{month}-labels.csv", index=False
-        )
-
-    print(f"lake:    {len(history):>6} bookings, arrivals before {CUTOFF_YEAR}")
-    print(f"traffic: {len(future):>6} bookings in {months.nunique()} monthly batches")
+    approved = (labelled[LABEL] == "Y").mean()
+    print(f"lake:    {len(labelled):>4} applications, {approved:.0%} approved")
+    print(f"traffic: {len(unlabelled):>4} new applications, no outcome")
 
 
 if __name__ == "__main__":

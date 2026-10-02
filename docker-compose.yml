@@ -1,0 +1,56 @@
+# ML Team: the agents' backend (FastAPI + ADK) and the console (Next.js), as two
+# containers. Start both with ./run.sh; the console is at http://localhost:3000.
+#
+#   backend   :8000  the pipeline, the agents, the analyst, /api (console) and /predict
+#   frontend  :3000  the console; its /api/* is proxied to the backend inside the network
+#
+# Everything the team produces lives on the host through bind mounts, so runs, models
+# and features survive a rebuild and can be read without entering a container.
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: backend
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      # Models are set in config/config.yml; ML_MODEL (shell or .env) overrides the team's.
+      ML_MODEL: ${ML_MODEL:-}
+      # With ML_MODEL=ollama_chat/…: Ollama runs on the host, reached as host.docker.internal.
+      OLLAMA_API_BASE: ${OLLAMA_API_BASE:-http://host.docker.internal:11434}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"  # Linux; Docker Desktop has it already
+    ports:
+      - "${BACKEND_PORT:-8000}:8080"
+    volumes:
+      - ./data:/code/data:ro                  # data/lending-loan/train.csv and test.csv, read-only
+      - ./config:/code/config:ro              # config.yml: edit on the host, no rebuild
+      - ./runs:/code/runs                     # one folder per run, with logs/ (the trace)
+      - ./registry:/code/registry             # versioned models
+      - ./feature_store:/code/feature_store   # versioned feature views
+      - ./.adk:/code/.adk                     # sessions: a paused review survives restarts
+      # Your gcloud application-default login, for Gemini on Vertex AI (read-only).
+      - ${HOME}/.config/gcloud:/root/.config/gcloud:ro
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/api/view', timeout=5)"]
+      interval: 5s
+      timeout: 6s
+      retries: 30
+      start_period: 10s
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+    image: frontend
+    environment:
+      BACKEND_URL: http://backend:8080
+    ports:
+      - "${FRONTEND_PORT:-3000}:3000"
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped

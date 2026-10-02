@@ -22,6 +22,10 @@ WORKDIR /code
 COPY ./pyproject.toml ./README.md ./uv.lock* ./
 
 COPY ./app ./app
+COPY ./config ./config
+# The loan dataset config.yml names (68 KB): read-only, so it ships in the image.
+# docker-compose mounts ./data over it locally.
+COPY ./data/lending-loan ./data/lending-loan
 
 RUN uv sync --frozen
 

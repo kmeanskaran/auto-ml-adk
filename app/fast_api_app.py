@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import asyncio
 import contextlib
 import os
 from collections.abc import AsyncIterator
@@ -24,9 +25,17 @@ from google.adk.runners import Runner
 
 from app.app_utils import services
 from app.app_utils.a2a import attach_a2a_routes
-from app.ui.routes import console, serving
+from app.harness import state_sync
+from app.harness.trace import setup_logging
 
 load_dotenv()
+setup_logging()
+# Deployed, runs/, registry/ and feature_store/ come from ML_STATE_BUCKET. Pulled before
+# the console routes load: importing them restores the console from runs/console.json.
+STATE = state_sync.start()
+
+from app.ui.routes import console, serving  # noqa: E402
+
 allow_origins = (
     os.getenv("ALLOW_ORIGINS", "").split(",") if os.getenv("ALLOW_ORIGINS") else None
 )
@@ -56,7 +65,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         task_store=InMemoryTaskStore(),
         rpc_path=f"/a2a/{adk_app.name}",
     )
+    sync = asyncio.create_task(state_sync.keep_synced(STATE)) if STATE else None
     yield
+    if sync:  # cancelling pushes one last time
+        sync.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await sync
 
 
 app: FastAPI = get_fast_api_app(

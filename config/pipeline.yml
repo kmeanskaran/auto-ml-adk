@@ -1,9 +1,0 @@
-# Settings for the ML pipeline. The pipeline never asks for these: edit them here.
-# Models and the metric are chosen per run at the training-plan review.
-dataset: hotel_bookings.csv          # file in data/lake/
-target: is_canceled                  # 1 = the booking was cancelled
-feature_view: hotel_bookings         # feature store view the pipeline versions
-prediction_moment: when the booking is made; only information known at that moment may be used
-costs:
-  missed_cancellation: 1.0           # we did not flag a booking that cancels: a room may stay empty
-  false_alarm: 2.0                   # we flagged a booking that did not cancel: a guest may be walked

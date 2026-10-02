@@ -54,9 +54,13 @@ def get_session_service():
             or os.environ.get("GOOGLE_CLOUD_LOCATION"),
             agent_engine_id=agent_engine_id,
         )
-    from google.adk.sessions.in_memory_session_service import InMemorySessionService
+    # Local default: a SQLite file, so a paused pipeline review survives a restart.
+    # SESSION_SERVICE_URI=memory:// switches back to in-memory sessions.
+    from google.adk.sessions.sqlite_session_service import SqliteSessionService
 
-    return InMemorySessionService()
+    local = os.path.join(_AGENT_DIR, ".adk")
+    os.makedirs(local, exist_ok=True)
+    return SqliteSessionService(db_path=os.path.join(local, "sessions.db"))
 
 
 @functools.cache

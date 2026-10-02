@@ -1,0 +1,20 @@
+# The backend image needs only pyproject.toml, uv.lock, README.md, app/, config/ and
+# the loan dataset. Runs, the registry and the feature store are mounted by
+# docker-compose.yml locally and synced with ML_STATE_BUCKET when deployed.
+.git
+.venv*
+.adk
+data/*
+!data/lending-loan
+runs
+registry
+feature_store
+archive
+notebooks
+docs
+frontend
+tests
+**/__pycache__
+**/*.pyc
+*.pdf
+.env

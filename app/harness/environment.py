@@ -10,7 +10,9 @@ comes from the deploy target's container.
 from __future__ import annotations
 
 import asyncio
+import os
 import re
+import signal
 import sys
 from pathlib import Path
 
@@ -58,14 +60,18 @@ class ProjectEnvironment(BaseEnvironment):
             env=self._child_env(),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            start_new_session=True,  # its own process group, so a kill reaches python too
         )
         try:
             stdout, stderr = await asyncio.wait_for(process.communicate(), timeout)
             timed_out = False
         except TimeoutError:
-            process.kill()
+            _kill(process)
             stdout, stderr = await process.communicate()
             timed_out = True
+        except asyncio.CancelledError:  # the run was restarted: stop the script too
+            _kill(process)
+            raise
         return ExecutionResult(
             exit_code=-1
             if timed_out or process.returncode is None
@@ -95,3 +101,12 @@ class ProjectEnvironment(BaseEnvironment):
             "LANG": "C.UTF-8",
             **self._extra_env,
         }
+
+
+def _kill(process: asyncio.subprocess.Process) -> None:
+    """Kill the shell and the script it started (the whole process group)."""
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError):
+        if process.returncode is None:
+            process.kill()

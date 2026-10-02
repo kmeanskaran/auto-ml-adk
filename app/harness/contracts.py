@@ -8,6 +8,7 @@ Whether the work is right is the skeptic's job, and the human's.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import shutil
 from pathlib import Path
@@ -23,7 +24,8 @@ FEATURES_FORMAT = """reports/features.json:
 {
   "outcome_column": "<name>",
   "entity_key": "<raw column that identifies a record>" | null,
-  "split": {"method": "<str>", "reason": "<str>"},
+  "split": {"method": "<str>", "reason": "<str>",
+            "ordered_by": "<raw column the split follows in time>" | null},
   "rows_removed": {"<reason>": <count>},
   "excluded_columns": {"<raw column>": "<reason>"},
   "features": {"<EVERY column build() returns>": {
@@ -35,20 +37,63 @@ plus artifacts/train.parquet, artifacts/valid.parquet, artifacts/test.parquet wr
 src/data.py (raw-shaped rows, with the outcome column), and src/features.py defining
 build(raw: pandas.DataFrame) -> pandas.DataFrame: row-wise and stateless (nothing fitted
 on data), never reading the outcome, returning exactly the declared features. It runs on
-production records too, which have the raw columns but no outcome."""
+production records too, which have the raw columns but no outcome, and it is served alone:
+it reads no file (not reports/features.json either), so column lists and mappings are
+written in src/features.py itself."""
 
 MODEL_FORMAT = """For every model key in reports/plan.json, artifacts/models/<key>.joblib: a fitted
 object with predict_proba(X), where X is a DataFrame of the feature view's feature
-columns (FEATURE_DIR/definition.json "features", in that order). Anything fitted on data
+columns (FEATURE_DIR/definition.json "features", in that order). FEATURE_DIR is a frozen
+feature store version: read it, never write into it. Anything fitted on data
 (imputers, encoders, scalers) lives inside it, e.g. a sklearn Pipeline. Train on
-FEATURE_DIR/offline/train.parquet; valid.parquet is for tuning. Do not compute final
-metrics or thresholds: the harness evaluates every candidate on valid and test."""
+FEATURE_DIR/offline/train.parquet; valid.parquet is for tuning. The harness refits a
+fresh copy with sklearn.base.clone(model).fit(X, y), once on train and once on
+train+valid, so the model must fit from X and y alone (no eval_set, no early stopping
+that needs one). Do not compute final metrics or thresholds: the harness picks the
+winner and threshold on valid, scores test, and serves the train+valid refit."""
 
 FORMATS = {"profile": "", "features": FEATURES_FORMAT, "model": MODEL_FORMAT}
 
 
+# The last verdict per (run, stage) and the fingerprint of the files it judged. Checking
+# materializes features or refits every model, so an unchanged hand-over is not checked
+# twice; a changed file, a removed output or a new config means a fresh check.
+_checked: dict[tuple[str, str], tuple[str, list[str]]] = {}
+INPUTS = ("src", "artifacts", "features", "reports")
+
+
+def fingerprint(root: Path) -> str:
+    """Name, size and modification time of every file a check reads or writes."""
+    digest = hashlib.sha256()
+    files = [settings.CONFIG] + [
+        p
+        for folder in INPUTS
+        for p in sorted((root / folder).rglob("*"))
+        if p.is_file() and not p.name.startswith("check_")
+    ]
+    for path in files:
+        stat = path.stat()
+        digest.update(f"{path}|{stat.st_size}|{stat.st_mtime_ns}\n".encode())
+    return digest.hexdigest()
+
+
+def unchanged(root: Path, stage: str) -> list[str] | None:
+    """The last check's problems if nothing it depends on changed since, else None."""
+    last = _checked.get((str(root), stage))
+    return list(last[1]) if last and last[0] == fingerprint(root) else None
+
+
 async def problems(root: Path, stage: str) -> list[str]:
-    """Everything missing or malformed in a stage's hand-over. Empty means complete."""
+    """Everything missing or malformed in a stage's hand-over. Empty means complete.
+    An unchanged hand-over gets its last verdict without being checked again."""
+    if (cached := unchanged(root, stage)) is not None:
+        return cached
+    issues = await _problems(root, stage)
+    _checked[(str(root), stage)] = (fingerprint(root), list(issues))
+    return issues
+
+
+async def _problems(root: Path, stage: str) -> list[str]:
     if stage == "profile":
         return (
             []
@@ -81,6 +126,12 @@ async def _features(root: Path) -> list[str]:
         for k in ("method", "reason")
         if not report["split"].get(k)
     ]
+    ordered = report["split"].get("ordered_by", "missing")
+    if ordered == "missing" or not (ordered is None or isinstance(ordered, str)):
+        issues.append(
+            "split.ordered_by is required: the raw column the split follows in time, "
+            "or null when the split does not follow time"
+        )
     if not report["features"]:
         issues.append("features is empty")
     for name, entry in report["features"].items():
@@ -114,15 +165,16 @@ async def _model(root: Path) -> list[str]:
         return [
             "the training plan or feature view is missing; this stage cannot be checked"
         ]
+    feature_dir = feature_store.path(ref["view"], ref["version"])  # never a stored path
     config = settings.load()
     report, issues = await evaluation.evaluate(
-        root, Path(ref["path"]), plan, (config.cost_missed, config.cost_false_alarm)
+        root, feature_dir, plan, (config.cost_missed, config.cost_false_alarm)
     )
     if issues or not report or not report["best"]:
         return issues or ["no candidate model could be evaluated"]
     staging = root / ".home" / "bundle"
     shutil.rmtree(staging, ignore_errors=True)
-    evaluation.bundle(root, report["best"], report, Path(ref["path"]), staging, "smoke")
+    evaluation.bundle(root, report["best"], report, feature_dir, staging, "smoke")
     smoke = await evaluation.smoke(staging)
     if not smoke.get("ok"):
         return [

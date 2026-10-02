@@ -16,11 +16,11 @@ MAX_LEVELS = 50  # categories beyond this are pooled when measuring signal
 TOP_CHARTED = 10
 
 
-def profile(path, target: str) -> dict:
+def profile(path, target: str, positive_value: str | None = None) -> dict:
     frame = pd.read_csv(path, low_memory=False)
     if target not in frame.columns:
         raise ValueError(f"Target column {target!r} is not in {path.name}.")
-    y = pd.to_numeric(frame[target], errors="coerce")
+    y = outcome(frame[target], positive_value)
     labelled = y.notna()
     columns = [
         _column(frame[name], y, labelled) for name in frame.columns if name != target
@@ -33,6 +33,7 @@ def profile(path, target: str) -> dict:
         "duplicate_rows": int(frame.duplicated().sum()),
         "target": {
             "column": target,
+            "positive_value": positive_value,
             "positive_rate": round(positives / max(int(labelled.sum()), 1), 4),
             "positives": positives,
             "negatives": int((y == 0).sum()),
@@ -42,6 +43,15 @@ def profile(path, target: str) -> dict:
     }
     report["charts"] = _charts(report)
     return report
+
+
+def outcome(series: pd.Series, positive_value: str | None) -> pd.Series:
+    """The target as 1 / 0 / NaN: 1 where it equals positive_value, or numeric as is."""
+    if positive_value is None:
+        return pd.to_numeric(series, errors="coerce")
+    text = series.astype(str).str.strip()
+    missing = series.isna() | text.isin(MISSING_TOKENS)
+    return (text == str(positive_value)).astype(float).where(~missing)
 
 
 def _column(series: pd.Series, y: pd.Series, labelled: pd.Series) -> dict:
@@ -128,7 +138,7 @@ def _charts(report: dict) -> list[dict]:
         charts.append(
             {
                 "type": "hbar",
-                "title": "Strongest single-column signal (AUC, 0.5 = none)",
+                "title": "Columns that predict the outcome on their own (0.5 = no signal, 1 = perfect)",
                 "categories": [c["name"] for c in signal],
                 "series": [
                     {"name": "AUC", "values": [c["signal_auc"] for c in signal]}
@@ -140,7 +150,7 @@ def _charts(report: dict) -> list[dict]:
         charts.append(
             {
                 "type": "hbar",
-                "title": "Missing values (% of rows)",
+                "title": "Columns with missing values (% of rows)",
                 "categories": [c["name"] for c in missing],
                 "series": [
                     {"name": "% missing", "values": [c["missing_pct"] for c in missing]}

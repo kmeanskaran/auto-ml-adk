@@ -1,0 +1,51 @@
+# The one config file: the business settings, the models and the limits. The pipeline
+# never asks for these: edit them here. Changes apply from the next run (or the next
+# agent call), no rebuild needed.
+# Models and the metric are proposed by the team per run (see autonomy below).
+goal: Decide, when a home-loan application is submitted, whether it will be approved.
+dataset: lending-loan/train.csv      # labelled records, in data/: what the team learns from
+traffic: lending-loan/test.csv       # production records, in data/: same columns, no outcome
+target: Loan_Status                  # the outcome column
+positive_value: "Y"                  # the target value that counts as the outcome (1); the rest are 0
+feature_view: loan_applications      # feature store view the pipeline versions
+prediction_moment: when the online application form is submitted; only what the applicant fills in may be used
+words:                               # how the console talks about records and the outcome
+  record: application
+  positive: approval
+  false_alarm: wrong approval
+costs:
+  missed_positive: 1.0               # an eligible applicant we did not approve: a lost customer
+  false_alarm: 2.0                   # we approved an applicant who should be rejected: credit risk
+
+# Fair lending. The harness compares the best candidate's approval rate and its share
+# of eligible applicants approved across the groups of each attribute, on the final
+# test. A gap below min_ratio (the four-fifths rule) is a warning, and a model with
+# one never goes live without a human, whatever autonomy says.
+fairness:
+  attributes: [Gender, Married]
+  min_ratio: 0.8
+
+# How much the team decides on its own. The skeptic reviews every stage; while it has
+# concerns, the team applies its recommendations itself for up to self_review_rounds
+# rounds before asking you. After that, only the reviews listed in ask_human wait for
+# you; the others the team settles (sound features continue, the proposed plan trains,
+# a sound model that beats production goes live).
+autonomy:
+  ask_human: [promote]               # any of: features, plan, promote
+  self_review_rounds: 1
+
+# The LLMs. The team (analyst's first look, engineer, skeptic) starts on `team`; the
+# console's model menu can switch it during a run. The chat analyst always uses
+# `analyst`. thinking: low | medium | high (how long Gemini reasons before answering).
+# ML_MODEL in the environment overrides `team` (e.g. ollama_chat/gpt-oss:120b-cloud).
+models:
+  team: gemini-3.7-flash
+  team_thinking: low
+  analyst: gemini-3.5-flash
+  analyst_thinking: low
+
+# Cost and speed guards per agent turn.
+limits:
+  tool_budget: 45                    # tool calls per turn; a wrap-up reminder at 2/3
+  fix_rounds: 2                      # times a stage is sent back for an incomplete hand-over
+  compact_above_chars: 50000         # history size where old tool output gets trimmed

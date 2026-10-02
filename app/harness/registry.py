@@ -26,7 +26,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from app.harness.evaluation import MODELS_DIR, bundle
+from app.harness.evaluation import FINAL_DIR, bundle
 from app.harness.project import APP_ROOT, append_jsonl, read_json
 
 REGISTRY = Path(os.environ.get("ML_REGISTRY_ROOT", APP_ROOT / "registry"))
@@ -86,7 +86,7 @@ def register(
     plan: dict[str, Any],
 ) -> dict[str, Any]:
     """Freeze one trained candidate as a new version (or return the existing one)."""
-    artifact_hash = _hash(run / MODELS_DIR / f"{model}.joblib")
+    artifact_hash = _hash(run / FINAL_DIR / f"{model}.joblib")
     with _lock:
         for existing in versions():
             if (
@@ -169,6 +169,11 @@ def remove(name: str) -> dict[str, Any]:
             _loaded.pop(name, None)
             append_jsonl(REGISTRY / "audit.jsonl", {"event": "remove", "version": name})
     return get(name) or version
+
+
+def forget() -> None:
+    """Drop the loaded serving bundles (after the registry was emptied)."""
+    _loaded.clear()
 
 
 def audit(limit: int = 20) -> list[dict[str, Any]]:

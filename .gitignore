@@ -212,8 +212,10 @@ tools/a2a-inspector/
 *-key.json
 credentials*.json
 
-# Datasets are downloaded, not committed (see docs/setup.md Phase 3)
-/data/
+# Datasets are downloaded, not committed, except the loan example the repo runs on
+# (68 KB): anyone who clones it can start the team, and CI builds the image with it.
+/data/*
+!/data/lending-loan/
 
 # Pipeline runs: code, notes, reviews and decisions are committed; data is not
 runs/*/artifacts/
@@ -239,3 +241,14 @@ registry/.staging-*
 runs/console.json
 runs/*.tmp
 runs/analysis/chat.json
+
+# Next.js console (frontend/)
+frontend/.next/
+frontend/out/
+frontend/*.tsbuildinfo
+
+# Planning briefs, not part of the project
+/ADK Production Agent Harness*.pdf
+
+# Design notes, setup log and article drafts: local only for now
+/docs/
