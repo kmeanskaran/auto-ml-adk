@@ -2,7 +2,7 @@
 #
 #   checks   the pre-commit hooks (lint, format, secrets, unit tests, console
 #            typecheck), then the console build
-#   deploy   backend → Agent Runtime (agents-cli deploy), console → Cloud Run (IAP),
+#   deploy   backend → Agent Runtime (agents-cli deploy), console → Cloud Run (private),
 #            then checks the deployed backend answers
 #
 # No keys: the deploy job signs in to Google Cloud through Workload Identity
@@ -83,7 +83,7 @@ jobs:
             --source frontend \
             --service-account "${{ vars.CONSOLE_SA }}" \
             --set-env-vars "BACKEND_URL=$AGENT_URL" \
-            --no-allow-unauthenticated --iap \
+            --no-allow-unauthenticated \
             --min-instances 0 --max-instances 2
 
       - name: Check the deployed backend answers

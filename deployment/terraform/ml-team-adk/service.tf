@@ -130,6 +130,9 @@ resource "google_vertex_ai_reasoning_engine" "app" {
       spec[0].container_spec,
       spec[0].source_code_spec,
       spec[0].deployment_spec,
+      # agents-cli deploy registers the agent's methods (sessions, queries), which
+      # the Console playground and Gemini Enterprise use; Terraform must keep them.
+      spec[0].class_methods,
     ]
   }
 

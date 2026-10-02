@@ -152,11 +152,14 @@ resource "google_project_iam_member" "deployer" {
   member   = "serviceAccount:${google_service_account.deployer.email}"
 }
 
-# The deployer runs the agent as ml-team-app and the console as ml-team-console.
+# The deployer runs the agent as ml-team-app and the console as ml-team-console, and
+# builds the console image as the project's default compute account, the account
+# Cloud Build uses for gcloud run deploy --source.
 resource "google_service_account_iam_member" "deployer_acts_as" {
   for_each = {
     app     = google_service_account.app_sa.name
     console = google_service_account.console.name
+    build   = "projects/${var.project_id}/serviceAccounts/${data.google_project.project.number}-compute@developer.gserviceaccount.com"
   }
   service_account_id = each.value
   role               = "roles/iam.serviceAccountUser"
