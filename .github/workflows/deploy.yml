@@ -1,6 +1,7 @@
 # Checks every pull request and push; a push to main that passes them goes to production.
 #
-#   checks   lint, unit tests, console typecheck and build
+#   checks   the pre-commit hooks (lint, format, secrets, unit tests, console
+#            typecheck), then the console build
 #   deploy   backend → Agent Runtime (agents-cli deploy), console → Cloud Run (IAP),
 #            then checks the deployed backend answers
 #
@@ -27,22 +28,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
-      - name: Backend
-        run: |
-          uv sync --frozen
-          uvx ruff check app tests
-          uv run pytest tests/unit -q
       - uses: actions/setup-node@v4
         with:
           node-version: 24
           cache: npm
           cache-dependency-path: frontend/package-lock.json
-      - name: Console
-        working-directory: frontend
+      - name: Install
         run: |
-          npm ci --no-audit --no-fund
-          npm run typecheck
-          npm run build
+          uv sync --frozen
+          npm ci --prefix frontend --no-audit --no-fund
+      - name: Pre-commit hooks (the same as on your machine)
+        run: uvx pre-commit run --all-files --show-diff-on-failure
+      - name: Console build
+        run: npm --prefix frontend run build
 
   deploy:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'

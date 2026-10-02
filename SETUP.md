@@ -10,7 +10,7 @@ the order it was done.
 | 3 | Run it locally | ✅ |
 | 4 | Google Cloud project | ✅ |
 | 5 | Gemini on Vertex AI, locally | ✅ |
-| 6 | Deployment code: Agent Runtime scaffold, Terraform, CI/CD | ✅ written and checked |
+| 6 | Deployment code: Agent Runtime scaffold, Terraform, CI/CD, pre-commit | ✅ written and checked |
 | 7 | Cloud infrastructure: `terraform apply` | ✅ agent `ml-team` created |
 | 8 | GitHub: repository variables | ⬜ next |
 | 9 | First deploy and checks | ⬜ |
@@ -110,10 +110,32 @@ Open the console, press **Run pipeline**, watch the Activity panel. Every run wr
 `runs/<run>/logs/`: `activity.log` (one line per step), `trace.jsonl` (the same steps
 with arguments, results, seconds and tokens) and `code/` (every file an agent wrote).
 
+### Tests and pre-commit
+
+The checks live in `.pre-commit-config.yaml`, and CI runs the very same ones, so a
+commit that passes here passes on GitHub:
+
 ```bash
-uv run pytest tests/unit                               # tests
-uvx ruff check app tests                               # lint
-(cd frontend && npm run typecheck && npm run build)    # console
+uvx pre-commit install              # once: the checks run on every git commit
+uvx pre-commit run --all-files      # run them all now
+```
+
+| Hook | Runs when | What |
+|------|-----------|------|
+| ruff check, ruff format | Python changed | lint (fixes what it can) and format |
+| detect-private-key | always | no private keys committed |
+| unit tests (`uv run pytest tests/unit`) | Python changed | 65 tests: harness, registry, feature store, workflow, the bucket sync, the scripts |
+| console typecheck | `frontend/` changed | `tsc --noEmit` |
+
+`git commit --no-verify` skips them in an emergency; CI still runs them.
+
+By hand:
+
+```bash
+uv run pytest tests/unit                     # tests
+uvx ruff check app tests scripts             # lint
+npm --prefix frontend run typecheck          # console
+npm --prefix frontend run build
 ```
 
 ---
@@ -238,7 +260,7 @@ It kept our `app/fast_api_app.py`, so the adapter is connected there by hand
 
 | Trigger | Jobs |
 |---------|------|
-| pull request | `checks`: ruff, unit tests, console typecheck and build |
+| pull request | `checks`: the pre-commit hooks (part 3: lint, format, private keys, unit tests, console typecheck), then the console build |
 | push to `main` (or run by hand on `main`) | `checks`, then `deploy`: backend → Agent Runtime (`agents-cli deploy`), console → Cloud Run (`gcloud beta run deploy --source frontend --iap`), then checks the backend answers |
 
 ---
@@ -375,6 +397,7 @@ billing account).
 | `DefaultCredentialsError` | Vertex on (or `OTEL_TO_CLOUD=true`) without Google Cloud credentials | `gcloud auth application-default login`; for Docker, keep the `~/.config/gcloud` mount |
 | Model 404 on Vertex | a regional `GOOGLE_CLOUD_LOCATION` | use `global`; don't change the model name |
 | Agents on the wrong model | `ML_MODEL` in the shell beats `.env`, which beats `config.yml` | `unset ML_MODEL`, check `.env` |
+| CI fails on a missing file that exists on your machine | a `.gitignore` rule hides it (the Python template's `lib/` once hid `frontend/lib/`) | `git check-ignore -v <file>`, then narrow the rule |
 | Console: "This page couldn't load" | a JavaScript error in the console, not the server | browser developer console; `curl localhost:3000/api/view` shows whether the backend answers |
 | `agents-cli deploy`: "No deployment target configured" | manifest says `deployment_target: none` | part 6.1 |
 | Docker build fails at `uv sync --frozen` | `pyproject.toml` changed, `uv.lock` did not | `agents-cli install`, commit `uv.lock` |

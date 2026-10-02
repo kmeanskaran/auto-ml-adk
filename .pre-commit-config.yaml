@@ -1,0 +1,29 @@
+# Checks on every commit (uvx pre-commit install), and the same in CI.
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.16.10
+    hooks:
+      - id: ruff-check
+        args: [--fix]
+      - id: ruff-format
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: detect-private-key
+
+  - repo: local
+    hooks:
+      - id: unit-tests
+        name: unit tests
+        language: system
+        entry: uv run pytest tests/unit -q
+        files: \.py$
+        pass_filenames: false
+
+      - id: console-typecheck
+        name: console typecheck
+        language: system
+        entry: npm --prefix frontend run typecheck
+        files: ^frontend/
+        pass_filenames: false
