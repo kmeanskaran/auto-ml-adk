@@ -2,7 +2,7 @@
 #
 #   checks   the pre-commit hooks (lint, format, secrets, unit tests, console
 #            typecheck), then the console build
-#   deploy   backend → Agent Runtime (agents-cli deploy), console → Cloud Run (public to view),
+#   deploy   backend → Agent Runtime (agents-cli deploy), console → Cloud Run (open to anyone),
 #            then checks the deployed backend answers
 #
 # No keys: the deploy job signs in to Google Cloud through Workload Identity
@@ -74,7 +74,8 @@ jobs:
             --update-env-vars "$ENV" \
             --labels "commit=${GITHUB_SHA::12}"
 
-      # Public to view; actions need the passcode from Secret Manager (route.ts).
+      # Open to anyone: the console's URL needs no login. One instance, so its
+      # requests to the agent stay under Agent Runtime's limit per caller.
       - name: Console → Cloud Run
         run: |
           gcloud run deploy ml-team-console --quiet \
@@ -82,9 +83,8 @@ jobs:
             --source frontend \
             --service-account "${{ vars.CONSOLE_SA }}" \
             --set-env-vars "BACKEND_URL=$AGENT_URL" \
-            --set-secrets "ACTION_PASSCODE=ml-team-console-passcode:latest" \
-            --allow-unauthenticated --no-iap \
-            --min-instances 0 --max-instances 2
+            --clear-secrets --allow-unauthenticated --no-iap \
+            --min-instances 0 --max-instances 1
 
       - name: Check the deployed backend answers
         run: |

@@ -52,14 +52,26 @@ const label = (model: string) => model.replace(/^gemini-/, "Gemini ").replace(/-
 
 export default function Chat({ chat, analyst, ask }: Props) {
   const [question, setQuestion] = useState("");
+  // Set the moment a question goes out, before the server reports the analyst busy:
+  // a second Enter or click would otherwise send it again.
+  const [sending, setSending] = useState(false);
   const box = useRef<HTMLDivElement>(null);
-  const busy = chat.status === "running";
+  const busy = chat.status === "running" || sending;
   useEffect(() => {
     if (box.current) box.current.scrollTop = box.current.scrollHeight;
   }, [chat.messages.length, busy]);
+  const submit = async (q: string) => {
+    if (!q || busy) return false;
+    setSending(true);
+    try {
+      return await ask(q);
+    } finally {
+      setSending(false);
+    }
+  };
   const send = async () => {
     const q = question.trim();
-    if (q && (await ask(q))) setQuestion("");
+    if (await submit(q)) setQuestion("");
   };
   return (
     <section className="card chat">
@@ -74,7 +86,7 @@ export default function Chat({ chat, analyst, ask }: Props) {
           <div className="starters">
             <div className="muted small">Ask about the data, the features, the models or production traffic. Try:</div>
             {STARTERS.map((q) => (
-              <button key={q} className="chip" disabled={busy} onClick={() => ask(q)}>
+              <button key={q} className="chip" disabled={busy} onClick={() => submit(q)}>
                 {q}
               </button>
             ))}
