@@ -5,9 +5,20 @@
 // deployed. Google's API wants a Google access token; see googleToken().
 
 import { execFile } from "node:child_process";
+import { createHash, timingSafeEqual } from "node:crypto";
 import { promisify } from "node:util";
 
 export const dynamic = "force-dynamic";
+
+// Deployed publicly, anyone may look (GET) but only someone with ACTION_PASSCODE may
+// act (POST: start a run, answer a review, chat, put a model live, clear). Unset, as
+// on a laptop, every request passes.
+function mayAct(request: Request): boolean {
+  const passcode = process.env.ACTION_PASSCODE;
+  if (!passcode || request.method === "GET") return true;
+  const digest = (text: string) => createHash("sha256").update(text).digest();
+  return timingSafeEqual(digest(request.headers.get("x-passcode") || ""), digest(passcode));
+}
 
 const backend = () => (process.env.BACKEND_URL || "http://localhost:8000").replace(/\/$/, "");
 
@@ -39,6 +50,10 @@ async function googleToken(): Promise<string> {
 }
 
 async function forward(request: Request, path: string[]): Promise<Response> {
+  if (!mayAct(request)) {
+    await new Promise((resolve) => setTimeout(resolve, 1000)); // slows down guessing
+    return Response.json({ detail: "passcode" }, { status: 401 });
+  }
   const base = backend();
   const url = `${base}/api/${path.map(encodeURIComponent).join("/")}${new URL(request.url).search}`;
   const headers: Record<string, string> = {

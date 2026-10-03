@@ -2,7 +2,7 @@
 #
 #   checks   the pre-commit hooks (lint, format, secrets, unit tests, console
 #            typecheck), then the console build
-#   deploy   backend → Agent Runtime (agents-cli deploy), console → Cloud Run (private),
+#   deploy   backend → Agent Runtime (agents-cli deploy), console → Cloud Run (public to view),
 #            then checks the deployed backend answers
 #
 # No keys: the deploy job signs in to Google Cloud through Workload Identity
@@ -61,8 +61,6 @@ jobs:
           workload_identity_provider: ${{ vars.WIF_PROVIDER }}
           service_account: ${{ vars.DEPLOYER_SA }}
       - uses: google-github-actions/setup-gcloud@v2
-        with:
-          install_components: beta
       - uses: astral-sh/setup-uv@v6
 
       - name: Backend → Agent Runtime
@@ -76,14 +74,16 @@ jobs:
             --update-env-vars "$ENV" \
             --labels "commit=${GITHUB_SHA::12}"
 
+      # Public to view; actions need the passcode from Secret Manager (route.ts).
       - name: Console → Cloud Run
         run: |
-          gcloud beta run deploy ml-team-console --quiet \
+          gcloud run deploy ml-team-console --quiet \
             --project "$PROJECT" --region "$REGION" \
             --source frontend \
             --service-account "${{ vars.CONSOLE_SA }}" \
             --set-env-vars "BACKEND_URL=$AGENT_URL" \
-            --no-allow-unauthenticated \
+            --set-secrets "ACTION_PASSCODE=ml-team-console-passcode:latest" \
+            --allow-unauthenticated --no-iap \
             --min-instances 0 --max-instances 2
 
       - name: Check the deployed backend answers

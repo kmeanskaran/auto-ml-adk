@@ -29,6 +29,7 @@ locals {
     "storage.googleapis.com",
     "iamcredentials.googleapis.com",
     "sts.googleapis.com",
+    "secretmanager.googleapis.com",
   ]
   deployer_roles = [
     "roles/aiplatform.user",          # update the Agent Runtime agent
@@ -134,6 +135,30 @@ resource "google_artifact_registry_repository" "console" {
   format        = "DOCKER"
   description   = "Console images built by gcloud run deploy --source"
   depends_on    = [google_project_service.ml_team]
+}
+
+# The console is public to view; acting on it (start a run, answer a review, chat, put a
+# model live, clear) needs this passcode (frontend/app/api/[...path]/route.ts). Only the
+# secret is created here; its value is added by hand so it never lands in the state:
+#   printf '%s' '<passcode>' | gcloud secrets versions add ml-team-console-passcode --data-file=-
+resource "google_secret_manager_secret" "console_passcode" {
+  project   = var.project_id
+  secret_id = "${var.project_name}-console-passcode"
+  replication {
+    auto {}
+  }
+  depends_on = [google_project_service.ml_team]
+}
+
+resource "google_secret_manager_secret_iam_member" "console_passcode" {
+  for_each = {
+    console  = "roles/secretmanager.secretAccessor" # reads it at start
+    deployer = "roles/secretmanager.viewer"         # checks it exists when deploying
+  }
+  project   = var.project_id
+  secret_id = google_secret_manager_secret.console_passcode.secret_id
+  role      = each.value
+  member    = "serviceAccount:${each.key == "console" ? google_service_account.console.email : google_service_account.deployer.email}"
 }
 
 # --- Deployer: GitHub Actions, through Workload Identity Federation ---------------

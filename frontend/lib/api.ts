@@ -1,12 +1,32 @@
 import type { Answer, View } from "./types";
 
-async function call<T>(path: string, body?: unknown): Promise<T> {
+// A public deployment asks for a passcode before any action (see the /api proxy). It is
+// asked once, kept for this browser tab, and asked again if it was wrong.
+const PASSCODE = "console-passcode";
+
+function passcode(): string {
+  try {
+    return sessionStorage.getItem(PASSCODE) || "";
+  } catch {
+    return "";
+  }
+}
+
+async function call<T>(path: string, body?: unknown, retry = true): Promise<T> {
   const response = await fetch(`/api/${path}`, {
     method: body === undefined ? "GET" : "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", "x-passcode": passcode() },
     body: body === undefined ? undefined : JSON.stringify(body),
     cache: "no-store",
   });
+  if (response.status === 401 && retry) {
+    const typed = window.prompt(passcode() ? "Wrong passcode. Try again:" : "Passcode to act on this console:");
+    if (!typed) throw new Error("Viewing only: actions need the passcode.");
+    try {
+      sessionStorage.setItem(PASSCODE, typed);
+    } catch {}
+    return call<T>(path, body, true);
+  }
   if (!response.ok) {
     const detail = (await response.json().catch(() => ({}))).detail;
     throw new Error(typeof detail === "string" ? detail : response.statusText);
