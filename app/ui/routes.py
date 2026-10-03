@@ -312,6 +312,8 @@ def _profile(files: _Files) -> dict:
         "findings": (summary or {}).get("findings", []),
         "charts": (summary or {}).get("charts", []),
         "details": profile,
+        # a rerun with no feedback on unchanged data reuses the last run's first look
+        "reused_from": (files.json(history.REUSED) or {}).get("profile"),
     }
 
 

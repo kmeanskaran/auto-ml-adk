@@ -253,6 +253,7 @@ export default function Pipeline({ pipeline, act }: { pipeline: PipelineView; ac
         if (s.state === "working") text = WORKING[s.key] || text;
         if (s.state === "waiting") icon = String(i + 1);
         if (s.decided_by === "team" && ["done", "kept", "discarded"].includes(s.state)) text += " · decided by the team";
+        if (s.reused_from && s.state === "done") text += ` · reused from ${s.reused_from} (no feedback, same data)`;
         if (s.rounds) text += ` · ${s.rounds} round${s.rounds > 1 ? "s" : ""} of fixes`;
         const reviewing = s.state === "your_review";
         return (

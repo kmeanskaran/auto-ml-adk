@@ -107,6 +107,23 @@ def _direction(stage: str) -> str:
             "this data when you run it, change what the feedback or your measurements "
             "say, and write your own src/ (prior/ is never run)."
         )
+    reused = read_json(current() / history.REUSED) or {}
+    if reused and stage == "features":
+        tried = ", ".join(reused.get("models") or []) or "none recorded"
+        parts.append(
+            f"No feedback this time, so this run explores. Keep the features that "
+            f"measured well in {prior} and try at least one change it did not make (a "
+            "new feature, a transformation, or dropping a weak one); show its effect in "
+            f"your hand-over. Do not repeat {prior}'s training plan: it tried {tried} and "
+            f"{reused.get('best') or 'none'} won. Keep the winner as the bar and propose "
+            "model families or settings it did not try."
+        )
+    if reused and stage == "model":
+        parts.append(
+            f"No feedback this time, so this run explores: tune differently from "
+            f"{prior}, whose best was {reused.get('best') or 'none'}, and say what you "
+            "changed."
+        )
     if prior and stage == "review":
         parts.append(
             f"This run reworked {prior}'s code ({history.PRIOR}/src/). Check that the "
@@ -283,7 +300,18 @@ async def start(ctx: Context, node_input: Any):
         step="start",
         **brief,
     )
-    yield Event(output=_request("profile"))
+    if reused := history.reuse_profile(run, config):
+        trace.note(
+            trace.PIPELINE,
+            f"↺ no feedback and the same data as {reused}: its first look at the data "
+            "is reused, and the team explores new features and models",
+            kind="step",
+            step="start",
+            reused=reused,
+        )
+        yield Event(output=_request("features"), route="reuse")
+        return
+    yield Event(output=_request("profile"), route="profile")
 
 
 def check(stage: str, next_stage: str | None):
@@ -619,7 +647,8 @@ def build(model: Any = None) -> Workflow:
         "the human reviews features, the training plan and promotion.",
         edges=[
             ("START", start),
-            (start, analyst),
+            # No feedback and unchanged data: the last run's first look still holds.
+            (start, {"profile": analyst, "reuse": engineer_features}),
             (analyst, check_profile),
             (check_profile, {"fix": analyst, "next": engineer_features}),
             (engineer_features, check_features),

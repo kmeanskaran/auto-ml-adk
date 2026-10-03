@@ -118,6 +118,7 @@ export type Stage = {
   live?: VersionCard | null;
   decided_by?: string;
   rounds?: number;
+  reused_from?: string | null; // profile: copied from this run (no feedback, same data)
 };
 
 export type Config = {

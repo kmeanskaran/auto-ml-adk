@@ -46,6 +46,52 @@ def started(run: Path, config: settings.Settings, feedback: str = "") -> dict[st
     return brief
 
 
+REUSED = "reports/reused.json"  # what this run took from the one it builds on
+PROFILE_FILES = (
+    "reports/summary.json",
+    "reports/check_profile.json",
+    "notes/analyst.md",
+)
+PROFILE_GLOBS = ("charts/*.json", "checks/analyst_*.py")
+
+
+def reuse_profile(run: Path, config: settings.Settings) -> str | None:
+    """With no feedback and the same data as the run this one builds on, the analyst's
+    first look would come out the same: copy it instead of redoing it. Returns the run
+    it came from, or None when the analyst should look again."""
+    brief = read_json(run / BRIEF) or {}
+    prior = brief.get("builds_on")
+    if brief.get("feedback") or not prior:
+        return None
+    record = next((r for r in runs(config.dataset) if r["run"] == prior), None)
+    source = project.RUNS / prior
+    if (
+        not record
+        or record.get("data") != file_hash(project.LAKE, config.dataset)
+        or not (source / "reports" / "summary.json").is_file()
+    ):
+        return None
+    copied = [
+        *(source / name for name in PROFILE_FILES),
+        *(path for pattern in PROFILE_GLOBS for path in source.glob(pattern)),
+    ]
+    for path in copied:
+        if path.is_file():
+            target = run / path.relative_to(source)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(path, target)
+    project.write_json(
+        run / REUSED,
+        {
+            "profile": prior,
+            "models": record.get("models") or [],
+            "best": record.get("best"),
+            "feature_view": record.get("feature_view"),
+        },
+    )
+    return prior
+
+
 def builds_on(dataset: str, exclude: str = "") -> str | None:
     """The newest finished run on this dataset that left code to build on."""
     return next(
