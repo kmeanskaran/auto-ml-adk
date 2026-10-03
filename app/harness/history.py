@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any
 
 from app import settings
-from app.harness import catalog, project, registry
+from app.harness import catalog, project, registry, trace
 from app.harness.evaluation import show
 from app.harness.project import INDEX, append_jsonl, file_hash, read_json
 
@@ -120,6 +120,7 @@ def finished(run: Path, outcome: str) -> dict[str, Any]:
             for stage in ("features", "model")
         },
         "warnings": evaluation.get("warnings") or [],
+        "usage": {k: v for k, v in trace.usage(run).items() if k != "turns"},
     }
     append_jsonl(project.RUNS / INDEX, record)
     return record

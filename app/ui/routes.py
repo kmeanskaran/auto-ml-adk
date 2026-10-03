@@ -246,6 +246,7 @@ def _pipeline_view() -> dict:
         "waiting_on": pause,
         "why": (PIPELINE.pause.payload.get("why") if PIPELINE.pause else "") or "",
         "activity": trace.activity(run) if run else [],
+        "usage": trace.usage(run) if run else None,  # time, tokens, cache, so far
         "brief": files.json(history.BRIEF),
         "next_builds_on": history.builds_on(config.dataset),
         "config": {
@@ -541,6 +542,7 @@ def _run_card(record: dict) -> dict:
         human_overrides=record.get("human_overrides", 0),
         decisions=len(record.get("decisions") or []),
         warnings=len(record.get("warnings") or []),
+        usage=record.get("usage"),  # None for runs recorded before usage was
     )
     return card
 

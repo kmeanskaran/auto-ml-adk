@@ -1,0 +1,68 @@
+# Stage 2 of 3: builds the images of a commit that passed pr-checks on main.
+#
+#   console   built and pushed to Artifact Registry as ml-team-console:<commit>;
+#             deploy runs exactly this image
+#   backend   built to prove the Dockerfile works, not pushed: Agent Runtime takes no
+#             prebuilt image, `agents-cli deploy` uploads the source and Google builds it
+#
+# Signs in to Google Cloud through Workload Identity Federation (no keys), which trusts
+# only this repository's main branch.
+
+name: build
+
+on:
+  workflow_run:
+    workflows: [pr-checks]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch: # rebuild the newest commit on main
+
+concurrency:
+  group: build
+  cancel-in-progress: false
+
+jobs:
+  build:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # Workload Identity Federation
+    env:
+      SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+      REGISTRY: ${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/cloud-run-source-deploy
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.SHA }}
+
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.WIF_PROVIDER }}
+          service_account: ${{ vars.DEPLOYER_SA }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Docker → Artifact Registry
+        run: gcloud auth configure-docker "${{ vars.GCP_REGION }}-docker.pkg.dev" --quiet
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Backend image (checks the Dockerfile; not pushed)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          cache-from: type=gha,scope=backend
+          cache-to: type=gha,scope=backend,mode=max
+
+      - name: Console image → Artifact Registry
+        uses: docker/build-push-action@v6
+        with:
+          context: frontend
+          push: true
+          tags: ${{ env.REGISTRY }}/ml-team-console:${{ env.SHA }}
+          cache-from: type=gha,scope=console
+          cache-to: type=gha,scope=console,mode=max
+
+      - name: Summary
+        run: echo "Console image ${REGISTRY}/ml-team-console:${SHA}" >> "$GITHUB_STEP_SUMMARY"

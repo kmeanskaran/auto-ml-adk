@@ -49,3 +49,4 @@ limits:
   tool_budget: 45                    # tool calls per turn; a wrap-up reminder at 2/3
   fix_rounds: 2                      # times a stage is sent back for an incomplete hand-over
   compact_above_chars: 50000         # history size where old tool output gets trimmed
+  script_seconds: 300                # an agent's script is stopped after this; the agents are told

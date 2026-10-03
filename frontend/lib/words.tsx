@@ -22,6 +22,14 @@ export function num(v: unknown, digits = 3): string {
   return v.toFixed(digits);
 }
 
+// "640k tokens" / "1.05M tokens"
+export const tokens = (n: number) => (n >= 1e6 ? `${(n / 1e6).toFixed(2)}M` : n >= 1e3 ? `${Math.round(n / 1e3)}k` : `${n}`);
+
+// One line for what a run cost: "50 min · 1.05M tokens · 40% cached · 102 tool calls"
+export function cost(u: { minutes: number; tokens: number; cached_pct: number; tool_calls: number }): string {
+  return `${u.minutes} min · ${tokens(u.tokens)} tokens · ${u.cached_pct}% cached · ${u.tool_calls} tool calls`;
+}
+
 export const pct = (v: number | null | undefined) => (v === null || v === undefined ? "—" : `${Math.round(v * 100)}%`);
 
 export function fmt(metrics: Record<string, MetricInfo>, key: string, v: number | null | undefined): string {

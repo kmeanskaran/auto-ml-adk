@@ -14,7 +14,7 @@ import NewRun from "./NewRun";
 import Overview from "./Overview";
 import Pipeline, { WORKING } from "./Pipeline";
 import { api } from "@/lib/api";
-import { WordsContext } from "@/lib/words";
+import { WordsContext, cost } from "@/lib/words";
 import type { Answer, Pipeline as PipelineView, View } from "@/lib/types";
 
 const POLL_MS = 1500;
@@ -186,7 +186,12 @@ export default function Console() {
           <section className="card">
             <div className="card-head">
               <h2>Pipeline</h2>
-              {p.run && <span className="small muted">{p.run}</span>}
+              {p.run && (
+                <span className="small muted" title="Time from the first step to the last (waits for you included), the model tokens the agents used, the share of them served from Gemini's prompt cache, and tool calls">
+                  {p.run}
+                  {p.usage && p.usage.tokens > 0 && ` · ${cost(p.usage)}`}
+                </span>
+              )}
             </div>
             {p.status === "error" && <div className="problems banner">{p.error}</div>}
             {p.brief && (p.brief.feedback || p.brief.builds_on) && (
@@ -215,7 +220,7 @@ export default function Console() {
               </button>
             ))}
           </div>
-          {tab === "activity" && <Activity lines={p.activity} run={p.run} />}
+          {tab === "activity" && <Activity lines={p.activity} run={p.run} usage={p.usage} />}
           {tab === "features" && <FeatureStore views={view.feature_store} />}
           {tab === "library" && <Library versions={view.registry.versions} onLive={(v) => run(() => api.makeLive(v))} onRemove={(v) => run(() => api.remove(v))} />}
           {tab === "history" && <History runs={view.history} />}

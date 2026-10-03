@@ -205,7 +205,9 @@ class PipelineRun:
         self.status = "running"
         self.go.set()
         self._save()
-        self.task = asyncio.create_task(self._consume(message, invocation_id))
+        self.task = asyncio.create_task(
+            trace.own_trace(self._consume(message, invocation_id))
+        )
 
     async def _consume(self, message: types.Content, invocation_id: str | None) -> None:
         try:
@@ -289,7 +291,7 @@ class AnalystChat:
         self.messages.append({"role": "you", "text": question})
         self.status = "running"
         self._save()
-        self.task = asyncio.create_task(self._answer(question))
+        self.task = asyncio.create_task(trace.own_trace(self._answer(question)))
 
     async def _answer(self, question: str) -> None:
         assert self.runner is not None

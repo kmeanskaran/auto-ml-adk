@@ -37,6 +37,7 @@ class Settings:
     tool_budget: int = 45  # limits.tool_budget: tool calls per agent turn
     fix_rounds: int = 2  # limits.fix_rounds
     compact_above_chars: int = 50_000  # limits.compact_above_chars
+    script_seconds: int = 300  # limits.script_seconds: a script is stopped after this
 
     def brief(self) -> str:
         outcome = (
@@ -45,8 +46,14 @@ class Settings:
             if self.positive_value is not None
             else f"Target: {self.target} (1 = positive)."
         )
+        from app.harness.environment import cpus  # here: settings loads before harness
+
         return (
-            f"Dataset: {self.dataset} (in DATA_DIR). {outcome}\n"
+            f"Dataset: {self.dataset}, read it as "
+            f"os.path.join(os.environ['DATA_DIR'], {self.dataset!r}). {outcome}\n"
+            f"Compute: {cpus()} CPUs; a script is stopped after {self.script_seconds} s. "
+            "Size searches to fit: a few candidate settings, not exhaustive grids; time "
+            "one fit before looping over many.\n"
             f"Prediction moment: {self.prediction_moment}.\n"
             f"Costs: a missed positive costs {self.cost_missed}, a false alarm costs "
             f"{self.cost_false_alarm}. Choose the threshold that minimises total cost."
@@ -95,5 +102,8 @@ def load() -> Settings:
         fix_rounds=max(0, int(limits.get("fix_rounds", Settings.fix_rounds))),
         compact_above_chars=max(
             10_000, int(limits.get("compact_above_chars", Settings.compact_above_chars))
+        ),
+        script_seconds=max(
+            30, int(limits.get("script_seconds", Settings.script_seconds))
         ),
     )

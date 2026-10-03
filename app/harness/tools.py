@@ -36,7 +36,6 @@ from app.harness.project import (
     write_json,
 )
 
-RUN_TIMEOUT_SECONDS = 900
 MAX_READ_CHARS = 12_000
 OUTPUT_HEAD, OUTPUT_TAIL = 1_500, 4_500
 MAX_FINDINGS, MAX_FINDING_CHARS, MAX_RECOMMENDATION_CHARS = 3, 140, 110
@@ -260,7 +259,7 @@ async def run_python(script: str, tool_context: ToolContext) -> dict[str, Any]:
     started = time.time()
     result = await ProjectEnvironment(base, _env(tool_context)).execute(
         f"{shlex.quote(sys.executable)} {shlex.quote(relative)}",
-        timeout=RUN_TIMEOUT_SECONDS,
+        timeout=settings.load().script_seconds,
     )
     seconds = round(time.time() - started, 1)
     append_jsonl(

@@ -133,6 +133,18 @@ export type Config = {
   costs: { missed: number; false_alarm: number };
 };
 
+// What a run cost, from its trace (app/harness/trace.py usage()).
+export type UsageTurn = { agent: string; seconds: number; tool_calls: number; tokens: number; cached_tokens: number };
+export type Usage = {
+  minutes: number; // wall clock, waits for you included
+  agent_minutes: number; // the agents' own working time
+  tokens: number;
+  cached_tokens: number;
+  cached_pct: number;
+  tool_calls: number;
+  turns?: UsageTurn[];
+};
+
 export type Pipeline = {
   status: "idle" | "running" | "paused" | "waiting" | "done" | "error";
   error: string;
@@ -142,6 +154,7 @@ export type Pipeline = {
   activity: string[];
   brief?: { feedback: string; builds_on: string | null } | null;
   next_builds_on: string | null;
+  usage?: Usage | null;
   config: Config;
   stages: Stage[];
 };
@@ -190,6 +203,7 @@ export type RunCard = {
   warnings: number;
   feedback?: string;
   builds_on?: string | null;
+  usage?: Usage | null; // none for runs recorded before usage was
 };
 
 export type ModelView = {

@@ -10,6 +10,7 @@ comes from the deploy target's container.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import os
 import re
 import signal
@@ -26,6 +27,17 @@ BLOCKED = {
     "dynamic code": r"\b(eval|exec|compile|__import__)\s*\(",
     "deleting folders": r"shutil\.rmtree",
 }
+
+
+def cpus() -> int:
+    """CPUs this process may really use. In a container, os.cpu_count() reports the
+    host's; the container's own limit is in cgroup v2's cpu.max ("200000 100000" = 2)."""
+    with contextlib.suppress(OSError, ValueError):
+        quota, period = Path("/sys/fs/cgroup/cpu.max").read_text().split()[:2]
+        if quota != "max":
+            return max(1, int(int(quota) / int(period)))
+    affinity = getattr(os, "sched_getaffinity", None)  # Linux only
+    return len(affinity(0)) if affinity else os.cpu_count() or 1
 
 
 def screen(source: str) -> list[str]:
@@ -97,7 +109,10 @@ class ProjectEnvironment(BaseEnvironment):
             "PYTHONHASHSEED": "0",
             "PYTHONDONTWRITEBYTECODE": "1",
             "MPLBACKEND": "Agg",
-            "OMP_NUM_THREADS": "4",
+            "OMP_NUM_THREADS": str(cpus()),
+            # Scripts in checks/ import the run's own code (src/) and kit.py, which
+            # sit in the working folder, not next to the script.
+            "PYTHONPATH": str(self._working_dir),
             "LANG": "C.UTF-8",
             **self._extra_env,
         }

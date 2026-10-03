@@ -15,17 +15,23 @@ The same plain lines go to the server console through the "ml_team" logger.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import logging
 import time
 import warnings
+from collections.abc import Awaitable
+from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar
 
 from google.adk.plugins.base_plugin import BasePlugin
+from opentelemetry import context as otel_context
 
 from app.harness.project import append_jsonl, home
+
+T = TypeVar("T")
 
 LOGGER = logging.getLogger("ml_team")
 ACTIVITY = "logs/activity.log"
@@ -64,6 +70,21 @@ class _SkipPolling(logging.Filter):
         return "GET /api/view" not in record.getMessage()
 
 
+async def own_trace(job: Awaitable[T]) -> T:
+    """Run a background job (a pipeline run, an analyst answer) in a trace of its own.
+
+    Started inside a console request, it would inherit that request's trace, and with
+    it the request's sampling decision: deployed, Google samples few requests, so most
+    runs would send no spans to Cloud Trace. Detached, the job is a root trace, and
+    ADK's spans (agents, model calls, tools) are always recorded.
+    """
+    token = otel_context.attach(otel_context.Context())
+    try:
+        return await job
+    finally:
+        otel_context.detach(token)
+
+
 def note(agent: str, summary: str, /, **fields: Any) -> None:
     """Record one step in the folder the agent works in (the current run for the pipeline)."""
     root = home(agent)
@@ -80,6 +101,52 @@ def activity(root: Path, limit: int = 80) -> list[str]:
     if not path.is_file():
         return []
     return path.read_text(encoding="utf-8", errors="replace").splitlines()[-limit:]
+
+
+def usage(root: Path) -> dict[str, Any]:
+    """What a run cost, from its trace: time, model tokens and the share of them served
+    from the prompt cache, and tool calls, in total and per agent turn.
+
+    `minutes` is the wall clock from the first step to the last (waits for the human
+    included); `agent_minutes` is the agents' own working time.
+    """
+    turns, first, last = [], None, None
+    path = root / TRACE
+    lines = path.read_text(encoding="utf-8").splitlines() if path.is_file() else []
+    for line in lines:
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        at = record.get("at") or ""
+        first, last = first or at, at or last
+        if record.get("kind") == "agent" and record.get("event") == "end":
+            turns.append(
+                {
+                    "agent": record.get("agent", ""),
+                    "seconds": record.get("seconds", 0),
+                    "tool_calls": record.get("tool_calls", 0),
+                    "tokens": record.get("tokens", 0),
+                    "cached_tokens": record.get("cached_tokens", 0),
+                }
+            )
+    tokens = sum(t["tokens"] for t in turns)
+    cached = sum(t["cached_tokens"] for t in turns)
+    wall = 0.0
+    if first and last:
+        with contextlib.suppress(ValueError):
+            wall = (
+                datetime.fromisoformat(last) - datetime.fromisoformat(first)
+            ).total_seconds()
+    return {
+        "minutes": round(wall / 60, 1),
+        "agent_minutes": round(sum(t["seconds"] for t in turns) / 60, 1),
+        "tokens": tokens,
+        "cached_tokens": cached,
+        "cached_pct": round(100 * cached / tokens) if tokens else 0,
+        "tool_calls": sum(t["tool_calls"] for t in turns),
+        "turns": turns,
+    }
 
 
 class TracePlugin(BasePlugin):

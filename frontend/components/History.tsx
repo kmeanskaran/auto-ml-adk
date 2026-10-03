@@ -3,7 +3,7 @@
 // Finished runs (runs/index.jsonl): what each tried, scored and decided. The next run's
 // team reads the same history as hypotheses to test.
 
-import { fmt, useWords } from "@/lib/words";
+import { fmt, tokens, useWords } from "@/lib/words";
 import type { RunCard } from "@/lib/types";
 
 export default function History({ runs }: { runs: RunCard[] }) {
@@ -20,6 +20,7 @@ export default function History({ runs }: { runs: RunCard[] }) {
             <th className="num">Final test</th>
             <th>Ended</th>
             <th className="num">Decisions</th>
+            <th className="num" title="Time from the first step to the last, model tokens, and the share served from Gemini's prompt cache">Cost</th>
           </tr>
         </thead>
         <tbody>
@@ -47,6 +48,18 @@ export default function History({ runs }: { runs: RunCard[] }) {
               <td className="num nowrap">
                 {r.decisions}
                 {r.human_overrides > 0 && <span className="muted"> · {r.human_overrides} yours</span>}
+              </td>
+              <td className="num nowrap">
+                {r.usage ? (
+                  <>
+                    {r.usage.minutes} min · {tokens(r.usage.tokens)}
+                    <div className="small muted">
+                      {r.usage.cached_pct}% cached · {r.usage.tool_calls} tool calls
+                    </div>
+                  </>
+                ) : (
+                  "—"
+                )}
               </td>
             </tr>
           ))}
