@@ -1,55 +1,110 @@
-# Stage 3 of 3: deploys a commit that build finished on main.
+# One workflow, three connected jobs; each starts only when the one before succeeded:
 #
-#   backend   → Agent Runtime (agents-cli deploy uploads the source; Google builds it)
-#   console   → Cloud Run, from build's image ml-team-console:<commit>, open to anyone
-#   check     the deployed backend answers
+#   checks ──► build ──► deploy      a push to main (or run by hand)
+#   checks                           a pull request: never builds or deploys
 #
-# Signs in to Google Cloud through Workload Identity Federation (no keys), which trusts
-# only this repository's main branch (deployment/terraform/ml-team-adk/ml_team.tf). The
-# repository variables it reads come from `terraform output github_variables`.
+#   checks   the pre-commit hooks (.pre-commit-config.yaml: lint, format, private keys,
+#            unit tests, console typecheck), then the console's production build.
+#            No Google Cloud access.
+#   build    console image → Artifact Registry as ml-team-console:<commit>; backend
+#            image built to prove the Dockerfile works, not pushed: Agent Runtime takes
+#            no prebuilt image (agents-cli deploy uploads the source; Google builds it)
+#   deploy   backend → Agent Runtime; console → Cloud Run from build's image, open to
+#            anyone; then checks the deployed backend answers
+#
+# build and deploy sign in to Google Cloud through Workload Identity Federation (no
+# keys), which trusts only this repository's main branch
+# (deployment/terraform/ml-team-adk/ml_team.tf). The repository variables they read
+# come from `terraform output github_variables`.
 
 name: deploy
 
 on:
-  workflow_run:
-    workflows: [build]
-    types: [completed]
+  pull_request:
+  push:
     branches: [main]
-  workflow_dispatch: # redeploy the newest commit on main (build must have run for it)
+  workflow_dispatch:
 
 concurrency:
-  group: deploy
+  group: deploy-${{ github.ref }}
   cancel-in-progress: false # never stop a deploy halfway
 
+env:
+  PROJECT: ${{ vars.GCP_PROJECT_ID }}
+  REGION: ${{ vars.GCP_REGION }}
+  IMAGE: ${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/cloud-run-source-deploy/ml-team-console
+
 jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install
+        run: |
+          uv sync --frozen
+          npm ci --prefix frontend --no-audit --no-fund
+      - name: Pre-commit hooks (the same as on your machine)
+        run: uvx pre-commit run --all-files --show-diff-on-failure
+      - name: Console build
+        run: npm --prefix frontend run build
+
+  build:
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    needs: checks
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # Workload Identity Federation
+    steps:
+      - uses: actions/checkout@v4
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.WIF_PROVIDER }}
+          service_account: ${{ vars.DEPLOYER_SA }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Docker → Artifact Registry
+        run: gcloud auth configure-docker "$REGION-docker.pkg.dev" --quiet
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Backend image (checks the Dockerfile; not pushed)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          cache-from: type=gha,scope=backend
+          cache-to: type=gha,scope=backend,mode=max
+
+      - name: Console image → Artifact Registry
+        uses: docker/build-push-action@v6
+        with:
+          context: frontend
+          push: true
+          tags: ${{ env.IMAGE }}:${{ github.sha }}
+          cache-from: type=gha,scope=console
+          cache-to: type=gha,scope=console,mode=max
+
   deploy:
-    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    needs: build
     runs-on: ubuntu-latest
     permissions:
       contents: read
       id-token: write # Workload Identity Federation
     env:
-      SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
-      PROJECT: ${{ vars.GCP_PROJECT_ID }}
-      REGION: ${{ vars.GCP_REGION }}
-      IMAGE: ${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/cloud-run-source-deploy/ml-team-console
       AGENT_URL: https://${{ vars.GCP_REGION }}-aiplatform.googleapis.com/reasoningEngines/v1/projects/${{ vars.GCP_PROJECT_ID }}/locations/${{ vars.GCP_REGION }}/reasoningEngines/${{ vars.AGENT_ENGINE_ID }}/api
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: ${{ env.SHA }}
-
       - uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ vars.WIF_PROVIDER }}
           service_account: ${{ vars.DEPLOYER_SA }}
       - uses: google-github-actions/setup-gcloud@v2
       - uses: astral-sh/setup-uv@v6
-
-      - name: The console image was built for this commit
-        run: |
-          gcloud artifacts docker images describe "$IMAGE:$SHA" --quiet >/dev/null ||
-            { echo "::error::No image $IMAGE:$SHA. Run the build workflow for this commit first."; exit 1; }
 
       - name: Backend → Agent Runtime
         run: |
@@ -60,15 +115,15 @@ jobs:
             --project "$PROJECT" --region "$REGION" --no-confirm-project \
             --service-account "${{ vars.APP_SA }}" \
             --update-env-vars "$ENV" \
-            --labels "commit=${SHA::12}"
+            --labels "commit=${GITHUB_SHA::12}"
 
       # Open to anyone: the console's URL needs no login. One instance, so its
       # requests to the agent stay under Agent Runtime's limit per caller.
-      - name: Console → Cloud Run
+      - name: Console → Cloud Run (the image build made)
         run: |
           gcloud run deploy ml-team-console --quiet \
             --project "$PROJECT" --region "$REGION" \
-            --image "$IMAGE:$SHA" \
+            --image "$IMAGE:$GITHUB_SHA" \
             --service-account "${{ vars.CONSOLE_SA }}" \
             --set-env-vars "BACKEND_URL=$AGENT_URL" \
             --clear-secrets --allow-unauthenticated --no-iap \
@@ -85,4 +140,4 @@ jobs:
             sleep 20 # the agent may be starting from zero
           done
           URL="$(gcloud run services describe ml-team-console --project "$PROJECT" --region "$REGION" --format='value(status.url)')"
-          echo "Console: $URL (commit ${SHA::12})" >> "$GITHUB_STEP_SUMMARY"
+          echo "Console: $URL (commit ${GITHUB_SHA::12})" >> "$GITHUB_STEP_SUMMARY"
