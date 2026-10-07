@@ -14,7 +14,6 @@ export default function Overview({ view, config, open }: { view: View; config: C
   const store = view.feature_store[0];
   const latest = store?.versions[0];
   const last = view.history[0];
-  const rounds = config.self_review_rounds;
   return (
     <div className="overview">
       <button className="tile" onClick={() => open("library")}>
@@ -71,7 +70,7 @@ export default function Overview({ view, config, open }: { view: View; config: C
         <span className="label">The team asks you</span>
         <b>{config.ask_human.length ? config.ask_human.map((k) => ASKS[k] || k).join(", ") : "only when stuck"}</b>
         <span className="sub">
-          settles the skeptic itself first ({rounds} round{rounds === 1 ? "" : "s"})
+          after one quick review
         </span>
       </div>
     </div>

@@ -142,12 +142,6 @@ def test_reports_are_short_and_validated():
         "concerns", ["Leak: AUC 0.99"], ["Remove z"], ctx("skeptic_features")
     )
     assert review["review"]["recommendations"] == ["Remove z"]
-    assert (
-        tools.submit_review(
-            "pass", ["ok"], [], ctx("skeptic_model"), recommended_model="nope"
-        )["status"]
-        == "error"
-    )
 
 
 def test_overlong_lines_are_sent_back_to_be_rewritten_not_cut():
@@ -354,8 +348,11 @@ def test_few_unordered_rows_are_compared_by_cross_validation():
     root, _ = trained_run(unordered)
     assert asyncio.run(contracts.problems(root, "model")) == []
     report = project.read_json(root / "reports" / "evaluation.json")
-    assert report["chosen_on"] == "cv5" and report["selection"]["rows"] == 300
-    assert "5-fold cross-validation over the 300" in report["protocol"]
+    assert report["chosen_on"] == "cv3" and report["selection"]["rows"] == 300
+    assert "3-fold cross-validation over the 300" in report["protocol"]
+    assert (
+        report["candidates"]["logistic_regression"]["drift"] == []
+    )  # no time order: noise
 
 
 def test_drift_is_only_a_warning_when_the_split_follows_time():
@@ -524,21 +521,19 @@ class Scripted(BaseLlm):
         yield LlmResponse(content=genai.Content(role="model", parts=parts))
 
 
-def autonomy(monkeypatch, ask_human=settings.REVIEWS, rounds=0):
-    """Pin how much the team decides alone, whatever config/pipeline.yml says."""
+def autonomy(monkeypatch, ask_human=settings.REVIEWS):
+    """Pin which reviews wait for the human, whatever config/config.yml says."""
     config = settings.load()
     monkeypatch.setattr(
         settings,
         "load",
-        lambda: dataclasses.replace(
-            config, ask_human=tuple(ask_human), self_review_rounds=rounds
-        ),
+        lambda: dataclasses.replace(config, ask_human=tuple(ask_human)),
     )
 
 
-def scripted_stages(monkeypatch, ask_human=settings.REVIEWS, rounds=0):
+def scripted_stages(monkeypatch, ask_human=settings.REVIEWS):
     """Stub the harness around the agents so the workflow can run on a scripted model."""
-    autonomy(monkeypatch, ask_human, rounds)
+    autonomy(monkeypatch, ask_human)
 
     async def complete(root, stage):
         if stage == "model":
@@ -764,9 +759,9 @@ def decisions():
     ]
 
 
-def test_team_settles_the_skeptic_itself_and_asks_only_to_go_live(monkeypatch):
-    scripted_stages(monkeypatch, ask_human=["promote"], rounds=1)
-    model = Scripted(model="scripted", verdicts=["concerns", "pass", "pass"])
+def test_sound_features_continue_and_the_team_asks_only_to_go_live(monkeypatch):
+    scripted_stages(monkeypatch, ask_human=["promote"])
+    model = Scripted(model="scripted", verdicts=["pass"])
     session = Session(model)
 
     async def scenario():
@@ -775,31 +770,33 @@ def test_team_settles_the_skeptic_itself_and_asks_only_to_go_live(monkeypatch):
         assert await session.answer(pause, choice="keep") is None
 
     asyncio.run(scenario())
-    # the skeptic's recommendation went to the engineer without asking anyone
-    assert any("- Remove x" in s for s in model.seen)
+    # one skeptic review per stage, no rework round, and nothing re-runs on resume
+    assert sum("Review the features stage" in s for s in model.seen) == 1
+    assert sum("Review the model stage" in s for s in model.seen) == 1
     assert decisions() == [
-        ("features", "feedback", "team"),
         ("features", "continue", "team"),
         ("plan", "train", "team"),
         ("promote", "keep", "human"),
     ]
     log = "\n".join(trace.activity(project.current()))
     assert "engineer_features" in log and "▶ started" in log and "■ finished" in log
-    assert "◆ team decided at features: feedback" in log
+    assert "◆ team decided at features: continue" in log
     assert "✋ waiting for the human at promote" in log
 
 
-def test_concerns_the_team_cannot_settle_go_to_the_human(monkeypatch):
-    scripted_stages(monkeypatch, ask_human=[], rounds=1)
-    session = Session(Scripted(model="scripted"))  # the skeptic never passes
-    pause = asyncio.run(session.start())
+def test_skeptic_concerns_go_straight_to_the_human(monkeypatch):
+    scripted_stages(monkeypatch, ask_human=[])
+    model = Scripted(model="scripted")  # the skeptic has concerns: "Remove x"
+    pause = asyncio.run(Session(model).start())
     assert pause[2]["stage"] == "features"
-    assert "could not settle" in pause[2]["why"]
-    assert decisions() == [("features", "feedback", "team")]
+    assert "concerns" in pause[2]["why"]
+    # the team did not rework the features on its own
+    assert sum("Build the features stage" in s for s in model.seen) == 1
+    assert not (project.current() / "decisions.jsonl").exists()
 
 
 def test_a_fully_autonomous_team_puts_a_sound_model_live(monkeypatch):
-    promoted = scripted_stages(monkeypatch, ask_human=[], rounds=1)
+    promoted = scripted_stages(monkeypatch, ask_human=[])
     session = Session(Scripted(model="scripted", verdicts=["pass", "pass"]))
     assert asyncio.run(session.start()) is None
     assert promoted == ["v9"]
@@ -849,7 +846,7 @@ def test_trace_keeps_every_version_of_the_code_an_agent_writes():
 def test_sessions_side_by_side_each_keep_their_own_run(monkeypatch):
     """The run lives in the session state, so two sessions in one process never share
     a folder, and each one's decisions land in its own run."""
-    scripted_stages(monkeypatch, ask_human=["features"], rounds=0)
+    scripted_stages(monkeypatch, ask_human=["features"])
     first = Session(Scripted(model="scripted", verdicts=["pass"]))
     second = Session(Scripted(model="scripted", verdicts=["pass"]))
 
@@ -915,24 +912,31 @@ def test_write_and_run_and_search_save_calls():
 def test_every_overlong_line_is_named_at_once():
     review = tools.submit_review(
         "concerns",
-        ["f" * 150],
-        ["r" * 120, "ok", "s" * 130],
+        ["f" * 160],
+        ["r" * 125, "ok", "s" * 130],
         ctx("skeptic_features"),
     )
     message = review["message"]
-    assert "150 chars, cut 10" in message
-    assert "120 chars, cut 10" in message and "130 chars, cut 20" in message
+    assert "160 chars, cut 20" in message
+    assert "125 chars, cut 15" in message and "130 chars, cut 20" in message
+
+
+def test_a_line_a_few_characters_over_is_accepted_not_sent_back():
+    # one character over cost a whole model call for a rewrite
+    receipt = tools.submit_receipt(["x" * 141], ctx("engineer_features"))
+    assert receipt["status"] == "ok"
 
 
 def test_the_tool_budget_lets_an_agent_only_hand_over_at_the_end():
     context = turn()
     read = types.SimpleNamespace(name="read_file")
     submit = types.SimpleNamespace(name="submit_receipt")
-    for _ in range(tools.SOFT_BUDGET):
+    soft, hard = tools.budgets(context.agent_name)
+    for _ in range(soft):
         assert tools.budget(read, {}, context) is None
     reminded = tools.budget_reminder(read, {}, context, {"status": "ok"})
     assert "wrap up" in reminded["budget"]
-    for _ in range(tools.HARD_BUDGET - tools.SOFT_BUDGET):
+    for _ in range(hard - soft):
         tools.budget(read, {}, context)
     assert "budget spent" in tools.budget(read, {}, context)["message"]
     assert tools.budget(submit, {}, context) is None
@@ -1022,7 +1026,7 @@ def test_fair_lending_gaps_are_plain_warnings():
 
 
 def test_an_unfair_model_never_goes_live_without_a_human(monkeypatch):
-    promoted = scripted_stages(monkeypatch, ask_human=[], rounds=0)
+    promoted = scripted_stages(monkeypatch, ask_human=[])
     monkeypatch.setattr(
         pipeline,
         "fairness_flags",
@@ -1040,7 +1044,7 @@ def test_an_unfair_model_never_goes_live_without_a_human(monkeypatch):
 
 
 def test_finished_runs_brief_the_next_one(monkeypatch):
-    promoted = scripted_stages(monkeypatch, ask_human=[], rounds=0)
+    promoted = scripted_stages(monkeypatch, ask_human=[])
     first = Session(Scripted(model="scripted", verdicts=["pass", "pass"]))
     assert asyncio.run(first.start()) is None and promoted == ["v9"]
     done = history.runs()
@@ -1103,7 +1107,7 @@ def test_the_kit_reports_rates_with_intervals_and_real_gaps():
 def test_a_new_run_rethinks_the_last_runs_code_with_the_humans_feedback(monkeypatch):
     from app.ui import runs
 
-    scripted_stages(monkeypatch, ask_human=[], rounds=0)
+    scripted_stages(monkeypatch, ask_human=[])
     model = Scripted(model="scripted", verdicts=["pass"] * 4)
     app = App(
         name="t",
@@ -1300,7 +1304,7 @@ def test_an_unchanged_hand_over_is_not_checked_twice(monkeypatch):
 
 
 def test_a_fix_round_that_changes_nothing_is_not_repeated(monkeypatch):
-    scripted_stages(monkeypatch, ask_human=[], rounds=0)
+    scripted_stages(monkeypatch, ask_human=[])
 
     async def same(root, stage):
         return ["artifacts/test.parquet does not exist"] if stage == "features" else []
@@ -1312,15 +1316,6 @@ def test_a_fix_round_that_changes_nothing_is_not_repeated(monkeypatch):
     # the first try and one fix; a second fix would only repeat the first
     assert sum("Build the features stage" in s for s in model.seen) == 2
     assert "the same 1 problems" in "\n".join(trace.activity(project.current()))
-
-
-def test_a_skeptic_repeating_itself_goes_to_the_human_not_another_round(monkeypatch):
-    scripted_stages(monkeypatch, ask_human=[], rounds=3)
-    pause = asyncio.run(
-        Session(Scripted(model="scripted")).start()
-    )  # always "Remove x"
-    assert pause[2]["stage"] == "features"
-    assert decisions() == [("features", "feedback", "team")]
 
 
 def test_a_chart_named_with_its_extension_lands_where_the_agent_expects(
@@ -1336,7 +1331,7 @@ def test_a_chart_named_with_its_extension_lands_where_the_agent_expects(
 
 
 def test_a_missing_receipt_alone_asks_for_the_receipt_not_the_stage(monkeypatch):
-    scripted_stages(monkeypatch, ask_human=["features"], rounds=0)
+    scripted_stages(monkeypatch, ask_human=["features"])
     model = Scripted(model="scripted", verdicts=["pass"])
     original = Scripted.generate_content_async
     skipped = []
@@ -1419,7 +1414,7 @@ def test_search_takes_a_file_as_well_as_a_folder():
 def console_run(monkeypatch, verdicts, ask_human=()):
     from app.ui import runs
 
-    scripted_stages(monkeypatch, ask_human=list(ask_human), rounds=0)
+    scripted_stages(monkeypatch, ask_human=list(ask_human))
     model = Scripted(model="scripted", verdicts=list(verdicts))
     app = App(
         name="t",
@@ -1505,12 +1500,35 @@ def test_the_chosen_model_and_thinking_level_go_into_every_request(
 def test_limits_come_from_the_config(monkeypatch):
     config = settings.load()
     assert (config.tool_budget, config.fix_rounds, config.compact_above_chars) == (
-        45,
-        2,
+        20,
+        1,
         50_000,
     )
-    assert tools.budgets() == (tools.SOFT_BUDGET, tools.HARD_BUDGET)
+    assert tools.budgets() == (13, 20)
+    assert tools.budgets("skeptic_features") == (6, 10)
     monkeypatch.setattr(
         settings, "load", lambda: dataclasses.replace(config, tool_budget=12)
     )
     assert tools.budgets() == (8, 12)
+
+
+def test_a_successful_submit_ends_the_turn_without_another_model_call():
+    def request(status):
+        return LlmRequest(
+            contents=[
+                genai.Content(
+                    role="user",
+                    parts=[
+                        genai.Part(
+                            function_response=genai.FunctionResponse(
+                                name="submit_receipt", response={"status": status}
+                            )
+                        )
+                    ],
+                )
+            ]
+        )
+
+    done = tools.handed_over(None, request("ok"))
+    assert done.content.parts[0].text == tools.HANDED_OVER
+    assert tools.handed_over(None, request("error")) is None  # it must fix and resubmit

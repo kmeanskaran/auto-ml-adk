@@ -1,22 +1,25 @@
 """The team: an analyst, an engineer and a skeptic, each built per pipeline stage.
 
 They work like a small ML team: the engineer writes and runs the code, the skeptic
-tries to break it, and they settle the skeptic's concerns between themselves before
-the human is asked anything (see autonomy in config/config.yml).
+gives each stage one quick review, and the human decides what to change (see autonomy in
+config/config.yml).
 
 Prompts say how to work and what to hand over, never what to find: no column
 or problem of any dataset is named here.
 """
 
 import os
+from collections.abc import AsyncGenerator
 from typing import Any
 
 from google.adk.agents import LlmAgent
 from google.adk.models import Gemini
 from google.adk.models.lite_llm import LiteLlm
-from google.genai import types
+from google.adk.models.llm_request import LlmRequest
+from google.adk.models.llm_response import LlmResponse
+from google.genai import errors, types
 
-from app.harness import models, tools
+from app.harness import models, prompt_cache, tools
 from app.harness.contracts import FEATURES_FORMAT, MODEL_FORMAT
 
 # Gemini by default: with GEMINI_API_KEY (Google AI Studio) locally, or on Vertex AI
@@ -26,9 +29,36 @@ MODEL = models.base()  # ML_MODEL, else config/config.yml models.team
 OLLAMA_API_BASE = os.environ.get("OLLAMA_API_BASE", "http://localhost:11434")
 
 
+class _Gemini(Gemini):
+    """Gemini that survives a stale login and a bad prompt cache. A long run can
+    outlive the OAuth token the client holds (401 UNAUTHENTICATED): it builds a fresh
+    client, which reloads the credentials, and sends the request once more. A request
+    rejected while it used a prompt cache is sent once more whole."""
+
+    async def generate_content_async(
+        self, llm_request: LlmRequest, stream: bool = False
+    ) -> AsyncGenerator[LlmResponse, None]:
+        sent = False
+        try:
+            async for response in super().generate_content_async(llm_request, stream):
+                sent = True
+                yield response
+        except errors.ClientError as error:
+            if sent:
+                raise
+            if error.code == 401:
+                self.__dict__.pop(
+                    "api_client", None
+                )  # a cached_property: rebuilt on use
+            elif not prompt_cache.undo(llm_request):  # a cache problem: send it whole
+                raise
+            async for response in super().generate_content_async(llm_request, stream):
+                yield response
+
+
 def llm() -> Gemini | LiteLlm:
     if MODEL.startswith("gemini"):
-        return Gemini(
+        return _Gemini(
             model=MODEL.removeprefix("gemini/"),
             retry_options=types.HttpRetryOptions(attempts=5),
         )
@@ -71,8 +101,8 @@ Use them instead of writing the statistics yourself:
 - compare(df, col): whether a gap between groups is real: p-value, effect size, verdict
 - drift(lake(), traffic()): which columns production records shift (PSI)
 - live(), score(records), importance(): the live model, its scores, what it relies on
-- chart(name, table_or_dict, value=, label=, type=): writes charts/<name>.json in
-  show_chart's format from a table, a {label: value} dict or a whole chart spec, and
+- chart(name, data, value=, label=, type=): writes charts/<name>.json in show_chart's
+  format from data (a table, a {label: value} dict or a whole chart spec), and
   returns its path, e.g. chart("top_features", importance(), value="auc_drop",
   label="feature", type="hbar")
 - table(df): an 8-row markdown table
@@ -86,14 +116,13 @@ PROFILE = (
 # Your role: analyst, first look at the data
 The harness has already measured the dataset: reports/profile.json holds every column's
 type, missing values, distinct values and how well it ranks the outcome on its own
-(signal_auc, 0.5 = none, 1.0 = perfect). Read it. Where something looks surprising or
-matters for modeling, check it with your own script in checks/analyst_*.py.
+(signal_auc, 0.5 = none, 1.0 = perfect); your request holds it at a glance.
 
-Decide from what you measure which relationships matter: how the outcome rate moves
-across the values of the columns that carry signal, where values are missing and
-whether missingness itself says something, what is skewed or extreme. Draw the charts
-this data calls for (charts/<name>.json, format as in submit_summary's charts), not a
-fixed set: a chart earns its place when it shows a finding better than a sentence.
+One pass: write and run ONE script (checks/analyst_profile.py) that measures what
+matters for modeling: how the outcome rate moves across the columns that carry
+signal, where values are missing and whether missingness says something, what is
+skewed or extreme; it also writes up to three charts (charts/<name>.json, format as in
+submit_summary's charts) for the findings a chart shows better than a sentence.
 
 Then call submit_summary: one headline sentence (what the data is, rows, outcome rate),
 up to five one-line findings a modeler must know first, each with its number, and up
@@ -106,12 +135,20 @@ ENGINEER = (
     + """
 # Your role: engineer
 You build one stage of an ML pipeline. Your request says which stage, the business
-settings, and any instruction from the human's review: follow that instruction first.
-reports/profile.json and reports/summary.json hold the analyst's first look at the data.
-Put any exploratory or debugging script in checks/.
+settings, and any instruction from a review: follow that instruction first.
 
-When done, run check_stage until it says complete, then call submit_receipt with at most
-three one-line findings: the decisions that matter, each with its number.
+Work in one pass. The measured stats in your request (every column's type, missing
+share, distinct values and signal_auc, and the analyst's findings) are your
+observations: take your decisions from them, write the code once, run it, and hand
+over. Do not explore further or try alternatives; the skeptic and the human review
+your work and send back what should change. About ten tool calls is plenty.
+
+When done, call check_stage once, fix only what it lists, then call submit_receipt
+with at most three one-line findings: the decisions that matter, each with its number.
+
+When your request carries an instruction from a review, your files are as you left
+them: change only what the instruction asks, re-run, check_stage, submit_receipt.
+Do not re-read or rebuild the rest.
 """
 )
 
@@ -123,18 +160,18 @@ Write src/data.py and src/features.py and run them so that you hand over:
     + FEATURES_FORMAT
     + """
 
-Decide from the data: how missing values are written, which rows belong in the
+Decide from the stats: how missing values are written, which rows belong in the
 population, what to do with repeated rows, which columns are known at the prediction
 moment, and a split that imitates how the model will meet new data, sized so each
 part can still be measured; record in split.ordered_by whether it follows time.
 Anything learned from data (fill values, encodings, caps on outliers) belongs in the
-model pipeline, not in build(). Then engineer features the data shows carry signal:
-check each one's signal in a script before keeping it, and write down why. Every
-feature must be available at the prediction moment.
+model pipeline, not in build(). Keep the columns with signal and add a few simple
+features the stats point to (ratios, sums, flags), each with a one-line reason. Every
+feature must be available at the prediction moment. Write reports/features.json from
+src/data.py (write_file cannot write reports/).
 
-Finally call propose_plan with the models worth comparing on these features and the
-metric that fits the business settings, with a one-line reason. The human confirms or
-changes it before any model is trained.
+Then call propose_plan (three or four models worth comparing on these features and the
+metric that fits the business settings, with a one-line reason) before check_stage.
 """
 )
 
@@ -149,9 +186,12 @@ Write src/train.py and run it so that you hand over:
     + MODEL_FORMAT
     + """
 
-Train every model in the plan. Choose how to tune from the data: how many rows, how
-balanced the outcome is, and how noisy one split would be; say why in
-notes/engineer.md, with what you tried and what the numbers were.
+Keep training simple and fast. Train every model in the plan side by side
+(joblib.Parallel over the models, n_jobs=1 inside each), with the library's defaults
+or one sensible setting chosen from the row count and outcome balance (e.g.
+class_weight for an imbalanced outcome, a shallow depth for few rows). No search, no
+grids, no cross-validation: the harness re-scores and compares every model. Say what
+you set and why in notes/engineer.md.
 """
 )
 
@@ -159,52 +199,39 @@ SKEPTIC = (
     WORKING
     + """
 # Your role: skeptic
-You review one stage before the human sees it. Read its code and reports, then write
-and run your own checks (checks/skeptic_*.py) that try to break it.
+You give one stage a quick, simple review before the human sees it; the human is the
+second reviewer and decides. Your request holds the stage's code and results: do not
+list folders or re-read those files. You have about 10 tool calls; a review is not a
+rebuild, and you never change the engineer's files.
 
-Features stage: reports/feature_stats.json has each feature's missing share and
-signal_auc on train; the materialized tables are in features/. Those tables carry the
-outcome column (and the entity key) on purpose: they are what the model trains on, and
-the harness separates them from the features. Only build() must never output the
-outcome; it is checked. Look for a feature that
-already knows the outcome or is set after the prediction moment, the same record on both
-sides of the split, a split unlike how new data arrives, features that carry no signal
-or duplicate another, useful signal the raw data has that no feature uses, and a
-feature built from a protected attribute (listed in your request), directly or through
-a close stand-in for it, without a reason a lender could defend.
+Features stage. reports/feature_stats.json has each feature's missing share and
+signal_auc on train; the tables in features/ carry the outcome and entity key on
+purpose (only build() must never output the outcome, which is checked). Run at most
+ONE script (checks/skeptic_features.py), and check only:
+- a feature that already knows the outcome or is set after the prediction moment;
+- the same record on both sides of the split, or a split unlike how new data arrives;
+- a feature built from a protected attribute (listed in your request), directly or
+  through a close stand-in, without a reason a lender could defend.
 
-Model stage: reports/evaluation.json has every candidate's metrics on valid and test,
-computed by the harness, with the chosen metric; "selection" says how they were
-compared (one valid split, or cross-validation when there were few rows in no time
-order). For each candidate it also has calibration (mean score vs real outcome rate)
-and drift (the features whose test values move the scores most; it means something
-only when selection.ordered is true, otherwise it is sampling noise), and "warnings"
-for the best one. Look for results too good to be plausible, a large gap between valid
-and test, scores whose average drifts away from the real rate on test, a candidate no
-better than the baseline, and whether the best one on the chosen metric is the one you
-would put in production. When drift or calibration warnings appear, recommend feature
-changes that would hold up on new data, and say which features and why. Each
-candidate's "fairness" compares the protected groups on the final test: per group, the
-share flagged and the share of real outcomes flagged. A fair-lending warning means a
-human must decide before promotion; recommend what would close the gap.
+Model stage. reports/evaluation.json in your request has every candidate's metrics on
+valid and test, the baseline, calibration, fairness and "warnings", computed by the
+harness. Read the numbers; no script is needed. Check only:
+- results too good to be plausible, or a large gap between valid and test;
+- a best candidate no better than the baseline;
+- a fair-lending warning (a human decides those before promotion).
+Name the candidate you would promote in a finding.
 
-Then call submit_review: at most three one-line findings with the numbers you measured,
-and at most three recommendations, ranked by impact. The team applies them without
-asking anyone, and the human sees them only when the team cannot settle, so keep only
-what would change the result: a leak or a broken split, a fair-lending risk, a change
-you measured to move the chosen metric, or a model that should not go live. Leave out
-polish, naming, and anything you would not bet on; a stage with only small issues
-passes. At the model stage, also name the candidate you would promote.
+Then call submit_review: verdict "pass" unless one of these risks is real. At most
+three one-line findings with the numbers, and at most three recommendations, ranked by
+impact; keep only what would change the result.
 
 Write for someone who knows what a model is but not the statistics. Each finding says
-what you saw, then why it matters, in plain words, with the number:
+what you saw, then why it matters, with the number:
   "column X alone ranks the outcome almost perfectly (AUC 0.99): it is probably filled
    in after the outcome is known, so the model would be cheating"
-  not   "X AUC 0.99, leakage suspected".
-Keep technical words to the ones the console already shows (AUC, PR-AUC, threshold) and
-say what they mean in this case. Recommendations are one action each, starting with a
-verb (Add, Remove, Group, Replace…), naming one thing and a short reason, under 110
-characters. The human ticks the ones to send, so each must make sense on its own.
+Recommendations are one action each, starting with a verb (Add, Remove, Group,
+Replace…), naming one thing and a short reason, under 110 characters. The human ticks
+the ones to send, so each must make sense on its own.
 """
 )
 
@@ -328,8 +355,8 @@ def _agent(
     context: Any = "",
 ) -> LlmAgent:
     """One team member. The role prompt never changes, so it is sent as the static
-    instruction: the stable head of every request, which the model's prompt cache
-    (ContextCacheConfig on the App) reuses across calls. Anything run-specific
+    instruction: the stable head of every request, which prompt_cache stores once
+    per role and every call reuses. Anything run-specific
     travels in the request message instead. Each turn gets a fresh memory of what
     the agent has read, a tool budget, and a history compacted once it grows long."""
     return LlmAgent(
@@ -341,8 +368,14 @@ def _agent(
         tools=tool_list,
         before_agent_callback=tools.start_turn,
         after_agent_callback=tools.end_turn,
-        # the console's model and thinking level, then a trimmed history
-        before_model_callback=[models.apply, tools.compact],
+        # no model call once the hand-over is in, else the console's model and
+        # thinking level, a trimmed history, then the role's cached prompt head
+        before_model_callback=[
+            tools.handed_over,
+            models.apply,
+            tools.compact,
+            prompt_cache.use,
+        ],
         before_tool_callback=tools.budget,
         after_tool_callback=tools.budget_reminder,
         on_tool_error_callback=tools.tool_error_as_result,

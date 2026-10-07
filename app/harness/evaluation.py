@@ -9,10 +9,12 @@ contaminated by what train.py did with the validation rows:
 
 How the winner is compared follows the data: when the split does not follow time
 (the engineer's split.ordered_by is null) and valid is small, one split is too noisy,
-so the winner and threshold come from 5-fold out-of-fold scores over train+valid.
+so the winner and threshold come from k-fold out-of-fold scores over train+valid
+(config limits.cv_folds). Candidates are fitted in parallel, one CPU each.
 
-It also reports calibration (mean score vs outcome rate on valid and test) and a
-drift report: the features whose values in the test rows move the scores most.
+It also reports calibration (mean score vs outcome rate on valid and test) and, when
+the split follows time, a drift report: the features whose test values move the
+scores most (without a time order it is sampling noise, so it is skipped).
 """
 
 from __future__ import annotations
@@ -26,7 +28,7 @@ from typing import Any
 
 from app import settings
 from app.harness import catalog, project
-from app.harness.environment import ProjectEnvironment
+from app.harness.environment import ProjectEnvironment, cpus
 from app.harness.project import write_json
 
 MODELS_DIR = "artifacts/models"  # the engineer's tuned models
@@ -37,6 +39,7 @@ CV_BELOW = 300  # valid rows under which an unordered split is compared by CV
 EVALUATE = r"""
 import glob, json, os, time
 import joblib
+from joblib import Parallel, delayed
 import numpy as np
 import pandas as pd
 from sklearn import metrics as M
@@ -54,7 +57,7 @@ both = pd.concat([tables["train"], tables["valid"]], ignore_index=True)
 y_both = both[outcome].to_numpy().astype(int)
 # With little comparison data and no time order, one split is too noisy to pick a
 # winner: compare on out-of-fold scores over train+valid instead.
-folds_n = min(5, int(np.bincount(y_both, minlength=2).min()))
+folds_n = min(int(os.environ["CV_FOLDS"]), int(np.bincount(y_both, minlength=2).min()))
 cv = not ordered and len(tables["valid"]) < int(os.environ["CV_BELOW"]) and folds_n >= 2
 y_sel = y_both if cv else y["valid"]
 if cv:
@@ -111,6 +114,8 @@ def calibration(yy, p):
 # Features whose test values move the scores most: give the test rows this feature's
 # values from the fitting rows and see how far the mean score moves.
 def drift(model, top=5):
+    if not ordered:  # same period: the shifts would be sampling noise
+        return []
     test, ref = tables["test"][features], pd.concat([tables["train"][features], tables["valid"][features]])
     base = float(model.predict_proba(test)[:, 1].mean())
     moves = []
@@ -150,14 +155,14 @@ def fairness(yy, p, t):  # per group: rows, share flagged, share of positives fl
 # Honest protocol, enforced here whatever train.py did with valid:
 #   fit on train        -> score valid: choose the winner and the threshold
 #   refit on train+valid -> score test at that threshold; this is the model served
-os.makedirs("artifacts/final", exist_ok=True)
-candidates, errors = {}, {}
-for path in sorted(glob.glob("artifacts/models/*.joblib")):
+def one_cpu(model):  # candidates run side by side, so each keeps to one CPU
+    jobs = {k: 1 for k in model.get_params() if k == "n_jobs" or k.endswith("__n_jobs")}
+    return model.set_params(**jobs) if jobs else model
+
+def evaluated(path):
     name = os.path.splitext(os.path.basename(path))[0]
-    if wanted and name not in wanted:
-        continue
     try:
-        model = joblib.load(path)
+        model = one_cpu(joblib.load(path))
         pv = compared(model)
         t = threshold(y_sel, pv)
         final = fitted(model, ["train", "valid"])
@@ -165,13 +170,21 @@ for path in sorted(glob.glob("artifacts/models/*.joblib")):
         pt = final.predict_proba(tables["test"][features])[:, 1]
         ms = 1000 * (time.time() - started) / len(pt) * 1000
         joblib.dump(final, f"artifacts/final/{name}.joblib")
-        candidates[name] = {"threshold": t, "valid": metrics(y_sel, pv, t),
+        return name, {"threshold": t, "valid": metrics(y_sel, pv, t),
                             "test": metrics(y["test"], pt, t), "ms_per_1000_rows": round(ms, 2),
                             "calibration": {"valid": calibration(y_sel, pv), "test": calibration(y["test"], pt)},
-                            "drift": drift(final), "fairness": fairness(y["test"], pt, t)}
+                            "drift": drift(final), "fairness": fairness(y["test"], pt, t)}, None
     except Exception as exc:
-        errors[name] = (f"cannot be refit by the harness (sklearn.base.clone(model).fit(X, y)): "
-                        f"{type(exc).__name__}: {exc}")[:400]
+        return name, None, (f"cannot be refit by the harness (sklearn.base.clone(model).fit(X, y)): "
+                            f"{type(exc).__name__}: {exc}")[:400]
+
+os.makedirs("artifacts/final", exist_ok=True)
+paths = [p for p in sorted(glob.glob("artifacts/models/*.joblib"))
+         if not wanted or os.path.splitext(os.path.basename(p))[0] in wanted]
+done = Parallel(n_jobs=max(1, min(int(os.environ["CPUS"]), len(paths))), prefer="threads")(
+    delayed(evaluated)(p) for p in paths)
+candidates = {name: result for name, result, _ in done if result is not None}
+errors = {name: error for name, _, error in done if error is not None}
 selection = {"method": f"cv{folds_n}" if cv else "valid", "rows": len(y_sel), "ordered": ordered}
 print(json.dumps({"candidates": candidates, "errors": errors, "baseline": baseline, "selection": selection}))
 """
@@ -247,6 +260,8 @@ async def evaluate(
         "COST_FP": str(costs[1]),
         "MODELS": json.dumps(plan["models"]),
         "CV_BELOW": str(CV_BELOW),
+        "CV_FOLDS": str(settings.load().cv_folds),
+        "CPUS": str(cpus()),
         "PROTECTED": json.dumps(list(settings.load().protected)),
     }
     result = await ProjectEnvironment(run, env).execute(

@@ -227,7 +227,7 @@ function Candidates({ lb, pick, setPick }: { lb: Leaderboard; pick: string; setP
 export function PromoteReview({ stage, act }: { stage: Stage; act: Act }) {
   const review = stage.review || {};
   const lb = stage.leaderboard;
-  const [pick, setPick] = useState(review.recommended_model || lb?.best || "");
+  const [pick, setPick] = useState(lb?.best || "");
   const [picked, setPicked] = useState<number[]>(all(review));
   const [text, setText] = useState("");
   const back = (choice: string) => {
@@ -267,7 +267,6 @@ export function PromoteReview({ stage, act }: { stage: Stage; act: Act }) {
         </div>
       </>
     );
-  const label = (key: string) => lb.rows.find((r) => r.model === key)?.label || key;
   const live = stage.live;
   return (
     <>
@@ -305,11 +304,6 @@ export function PromoteReview({ stage, act }: { stage: Stage; act: Act }) {
         </ul>
       )}
       <Skeptic review={review} subject="the models" />
-      {review.recommended_model && (
-        <div className="small">
-          It would put <b>{label(review.recommended_model)}</b> live.
-        </div>
-      )}
       <Candidates lb={lb} pick={chosen.model} setPick={setPick} />
       <More label="Compare the models on a chart">
         <Comparison lb={lb} />

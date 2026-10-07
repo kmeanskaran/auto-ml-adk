@@ -2,8 +2,8 @@
 
 A team of AI agents that works like a small ML team, built on Google's
 [Agent Development Kit (ADK)](https://adk.dev/). The agents write and run their own code,
-review each other's work, and settle their own disagreements; you are asked only where
-a human decision matters. Every step they take is traced.
+review each other's work once, and ask you where a human decision matters. Every step
+they take is traced.
 
 The example problem, from `notebooks/Loan-status-prediction.ipynb`: **decide, when a
 home-loan application is submitted, whether it will be approved**.
@@ -15,20 +15,24 @@ The pipeline is an ADK Workflow with five stages.
 | # | Stage | Who | What happens |
 |---|-------|-----|--------------|
 | 1 | Understand the data | Analyst | The harness profiles every column; the analyst summarises what matters. Full report under `›`. |
-| 2 | Engineer features | Engineer, Skeptic | The engineer writes `data.py` and a row-wise `features.py`; the skeptic tries to break them and recommends changes. |
+| 2 | Engineer features ✋ | Engineer, Skeptic, You | The engineer writes `data.py` and a row-wise `features.py`; the skeptic gives them one quick review; you continue or send changes back. |
 | 3 | Training plan | Team (or you) | The engineer proposes the models to compare and the metric that decides the winner. |
-| 4 | Train and evaluate | Engineer, Skeptic | The engineer trains; the harness scores every candidate on every metric. |
+| 4 | Train and evaluate | Engineer, Skeptic | The engineer trains with simple settings; the harness scores every candidate in parallel; the skeptic gives the results one quick review. |
 | 5 | Go live ✋ | You | Promote a candidate, keep it, retrain with feedback, change the features, or replan. |
 
-**How little it asks you** is set in `config/config.yml` under `autonomy`:
+**When it asks you** is set in `config/config.yml` under `autonomy`:
 
-- While the skeptic has concerns, the engineer gets every recommendation and tries
-  again, for up to `self_review_rounds` rounds, without asking you.
-- A review listed in `ask_human` (by default only `promote`) always waits for you.
-  The others the team settles: sound features continue, the proposed plan trains,
-  and a sound model goes live if it beats production and doing nothing.
-- If the team cannot settle a concern within its rounds, the review goes to you,
-  with the reason shown above the question.
+- Each agent works in one pass: it decides from the measured stats, writes the code
+  once, runs it and hands over. No agent loops on its own.
+- The skeptic gives each stage one quick review (at most one check script, a small
+  tool budget: `limits.skeptic_tool_budget`); you are the second reviewer.
+- A review listed in `ask_human` (by default `features` and `promote`) waits for you
+  with the skeptic's findings and the harness's warnings; you tick the
+  recommendations to send back.
+- The others the team settles when they are sound: features the skeptic passed
+  continue, a valid proposed plan trains, and a model the skeptic passed with no
+  warnings goes live if it beats production and doing nothing. Anything else comes
+  to you.
 
 Every decision, the team's or yours, lands in the run's `decisions.jsonl`.
 

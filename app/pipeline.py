@@ -3,17 +3,17 @@
   START → profile → analyst → check
         → features engineer → check ─fix→ (engineer)        [materializes the feature view]
         → skeptic → REVIEW FEATURES ─feedback→ (engineer)    [continue registers it in the store]
-        → TRAINING PLAN (human picks models and metric)
+        → TRAINING PLAN (the engineer's proposal, or the human's)
         → model engineer → check ─fix→ (engineer)           [harness evaluates every candidate]
         → skeptic → PROMOTE ─retrain→ (model engineer) ─replan→ (training plan)
                             ─features→ (features engineer, then review, plan, train again)
                             promote / keep as candidate → registry version
 
-At the capitalised steps the team answers first, the way an ML team settles its own
-reviews: while the skeptic has concerns, the engineer gets every recommendation, for
-up to autonomy.self_review_rounds rounds (config/config.yml). After that a step
-waits for the human only if it is listed in autonomy.ask_human or the team could not
-settle it; the pause says why. Otherwise the team decides: sound features continue,
+The skeptic reviews each stage once, quickly, and the human is the second reviewer:
+a capitalised step listed in autonomy.ask_human (config/config.yml) waits for the
+human with the skeptic's review and the harness's warnings. A step not listed is
+settled by the team when the skeptic passes it and nothing is flagged; anything
+else goes to the human. The pause says why. No agent loops on its own. Otherwise the team decides: sound features continue,
 the proposed plan trains, and a sound model goes live if it beats production.
 
 A run starts with the human's optional feedback (session state "feedback") and builds
@@ -178,6 +178,23 @@ def _briefing() -> str:
     return "".join(f"\n\n{p}" for p in parts)
 
 
+REVIEWED = {
+    "features": ("src/data.py", "src/features.py", "reports/features.json"),
+    "model": ("src/train.py", "reports/evaluation.json"),
+}
+
+
+def _code(stage: str) -> str:
+    """The stage's code and results, handed to the skeptic so it reviews instead of
+    reading files."""
+    parts = []
+    for name in REVIEWED.get(stage, ()):
+        path = current() / name
+        if path.is_file():
+            parts.append(f"{name}:\n```\n{path.read_text(encoding='utf-8')}\n```")
+    return "".join(f"\n\n{p}" for p in parts)
+
+
 def _reset(stage: str) -> None:
     """Clear a stage's hand-over so a redo cannot pass on the previous round's files."""
     run = current()
@@ -216,46 +233,6 @@ def _review(stage: str) -> tuple[dict[str, Any], list[str]]:
         "problems"
     ) or []
     return review, problems
-
-
-def _sound(stage: str) -> bool:
-    review, problems = _review(stage)
-    return review.get("verdict") == "pass" and not problems
-
-
-def _self_review(ctx: Context, stage: str) -> dict[str, Any] | None:
-    """The team's own fix while the skeptic has concerns and rounds remain: every
-    recommendation, plus any problem the completeness check left. None otherwise."""
-    used = ctx.state.get(f"team_rounds_{stage}", 0)
-    if _sound(stage) or used >= settings.load().self_review_rounds:
-        return None
-    review, problems = _review(stage)
-    recommendations = review.get("recommendations") or []
-    if not recommendations and not problems:
-        return None
-    # The skeptic repeating what the team just applied: another round would loop.
-    if used and [*recommendations, *problems] == ctx.state.get(f"team_asked_{stage}"):
-        return None
-    text = "Fix these problems first:\n- " + "\n- ".join(problems) if problems else ""
-    return {
-        "apply": list(range(len(recommendations))),
-        "text": text,
-        "round": used + 1,
-        "asked": [*recommendations, *problems],
-    }
-
-
-def _why(stage: str, review_stage: str) -> str:
-    """Why a review waits for the human, shown with the question."""
-    if stage in settings.load().ask_human:
-        return f"Your call: {stage} is a human review (autonomy.ask_human)."
-    rounds = settings.load().self_review_rounds
-    return (
-        f"The team could not settle this on its own: the skeptic still has concerns "
-        f"after {rounds} round{'s' if rounds != 1 else ''} of fixes."
-        if not _sound(review_stage)
-        else "The team needs your decision here."
-    )
 
 
 def _instruction(stage: str, answer: dict[str, Any]) -> str:
@@ -368,33 +345,15 @@ def check(stage: str, next_stage: str | None):
             yield Event(
                 output=f"Review the {stage} stage.\n{settings.load().brief()}{note}"
                 + _direction("review")
-                + _briefing(),
+                + _briefing()
+                + _code(stage),
                 route="next",
             )
 
     return check_node
 
 
-def _needs_review(ctx: Context, stage: str, round_: int) -> bool:
-    """The skeptic has not reviewed this round yet and has not been reminded."""
-    return not read_json(current() / "reviews" / f"{stage}.json") and not ctx.state.get(
-        f"reminded_{stage}_{round_}"
-    )
-
-
-def _remind(stage: str, round_: int):
-    yield Event(state={f"reminded_{stage}_{round_}": True})
-    yield Event(
-        output=f"You have not submitted your review of the {stage} stage. Review it "
-        "and call submit_review.",
-        route="remind",
-    )
-
-
-def _ask(
-    key: str, message: str, stage: str, review_stage: str, why: str = ""
-) -> RequestInput:
-    why = why or _why(stage, review_stage)
+def _ask(key: str, message: str, stage: str, why: str) -> RequestInput:
     trace.note(
         trace.PIPELINE, f"✋ waiting for the human at {stage}: {why}", kind="pause"
     )
@@ -411,22 +370,21 @@ async def review_features(ctx: Context, node_input: Any):
     round_ = ctx.state.get("round_features", 0)
     key = f"review_features_{round_}"
     answer, by = (ctx.resume_inputs or {}).get(key), "human"
-    if answer is None and _needs_review(ctx, "features", round_):
-        for event in _remind("features", round_):
-            yield event
-        return
     state: dict[str, Any] = {"round_features": round_ + 1}
     if answer is None:
-        fix = _self_review(ctx, "features")
-        if fix:
-            answer, by = {"choice": "feedback", **fix}, "team"
-            state["team_rounds_features"] = fix["round"]
-            state["team_asked_features"] = fix.pop("asked")
-        elif "features" not in settings.load().ask_human and _sound("features"):
-            answer, by = {"choice": "continue"}, "team"
+        review, problems = _review("features")
+        if "features" in settings.load().ask_human:
+            why = "Your call: features is a human review (autonomy.ask_human)."
+        elif not review:
+            why = "The skeptic submitted no review."
+        elif review.get("verdict") != "pass" or problems:
+            why = "The skeptic has concerns."
         else:
-            yield _ask(key, "Review the features", "features", "features")
+            why = ""
+        if why:
+            yield _ask(key, "Review the features", "features", why)
             return
+        answer, by = {"choice": "continue"}, "team"
     choice = str(answer.get("choice", ""))
     instruction = _instruction("features", answer)
     blocked = _review("features")[1]
@@ -445,7 +403,7 @@ async def review_features(ctx: Context, node_input: Any):
         _reset("features")
         yield Event(output=_request("features", instruction), route="redo")
     else:
-        yield Event(state={**state, "team_rounds_features": 0})
+        yield Event(state=state)
         view = settings.load().feature_view
         definition = feature_store.register(current(), view)
         ref = {
@@ -482,8 +440,7 @@ async def plan_gate(ctx: Context, node_input: Any):
                 key,
                 "Confirm the training plan",
                 "plan",
-                "features",
-                ""
+                "Your call: plan is a human review (autonomy.ask_human)."
                 if proposed_ok
                 else "The engineer's proposed plan is missing or invalid; choose one.",
             )
@@ -532,50 +489,37 @@ def _beats_production(model: str, evaluation: dict[str, Any]) -> bool:
 
 @node(name="promote_gate", rerun_on_resume=True)
 async def promote_gate(ctx: Context, node_input: Any):
-    """Concerns go back to the engineer; a sound model goes live if it beats production,
-    or the human picks: promote, keep, retrain, change features, or replan."""
+    """A sound model goes live if it beats production; otherwise, or when promote is a
+    human review, the human picks: promote, keep, retrain, change features, or replan.
+    Sound: every planned model evaluated, no harness warning on the best one, and the
+    skeptic passed it."""
     del node_input
     bind(ctx.state)
     round_ = ctx.state.get("round_model", 0)
     key = f"promote_{round_}"
     answer, by = (ctx.resume_inputs or {}).get(key), "human"
-    if answer is None and _needs_review(ctx, "model", round_):
-        for event in _remind("model", round_):
-            yield event
-        return
     evaluation = read_json(current() / "reports" / "evaluation.json") or {}
     candidates = evaluation.get("candidates") or {}
     state: dict[str, Any] = {"round_model": round_ + 1}
     if answer is None:
-        fix = _self_review(ctx, "model")
-        if fix:
-            answer, by = {"choice": "retrain", **fix}, "team"
-            state["team_rounds_model"] = fix["round"]
-            state["team_asked_model"] = fix.pop("asked")
+        pick = str(evaluation.get("best") or "")
+        # A fair-lending warning is never the team's call to wave through.
+        unfair = fairness_flags(candidates.get(pick) or {})
+        if unfair:
+            why = f"Fair-lending check on {pick}: {unfair[0]} A human decides whether it may go live."
+        elif "promote" in settings.load().ask_human:
+            why = "Your call: promote is a human review (autonomy.ask_human)."
+        elif _review("model")[1] or evaluation.get("warnings"):
+            why = "The harness has warnings about the best model."
+        elif _review("model")[0].get("verdict") != "pass":
+            why = "The skeptic has concerns."
         else:
-            pick = _review("model")[0].get("recommended_model") or evaluation.get(
-                "best"
-            )
-            # A fair-lending warning is never the team's call to wave through.
-            unfair = fairness_flags(candidates.get(str(pick)) or {})
-            if (
-                "promote" not in settings.load().ask_human
-                and _sound("model")
-                and not unfair
-            ):
-                choice = (
-                    "promote" if _beats_production(str(pick), evaluation) else "keep"
-                )
-                answer, by = {"choice": choice, "model": pick}, "team"
-            else:
-                why = (
-                    f"Fair-lending check on {pick}: {unfair[0]} A human decides "
-                    "whether it may go live."
-                    if unfair
-                    else ""
-                )
-                yield _ask(key, "Promote to production?", "promote", "model", why)
-                return
+            why = ""
+        if why:
+            yield _ask(key, "Promote to production?", "promote", why)
+            return
+        choice = "promote" if _beats_production(pick, evaluation) else "keep"
+        answer, by = {"choice": choice, "model": pick}, "team"
     choice = str(answer.get("choice", ""))
     model = str(answer.get("model") or evaluation.get("best") or "")
     if choice in ("promote", "keep") and model not in candidates:
@@ -583,8 +527,6 @@ async def promote_gate(ctx: Context, node_input: Any):
         answer = {
             "text": "No evaluated candidate could be registered; fix training so every planned model evaluates."
         }
-    if choice in ("promote", "keep"):
-        state["team_rounds_model"] = 0
     yield Event(state=state)
     if choice in ("promote", "keep"):
         ref = read_json(current() / "reports" / "feature_ref.json") or {}
@@ -644,7 +586,7 @@ def build(model: Any = None) -> Workflow:
     return Workflow(
         name="ml_team",
         description="Profiles the data, engineers features, trains and promotes a model; "
-        "the human reviews features, the training plan and promotion.",
+        "a skeptic reviews each stage once and the human decides.",
         edges=[
             ("START", start),
             # No feedback and unchanged data: the last run's first look still holds.
@@ -657,7 +599,6 @@ def build(model: Any = None) -> Workflow:
             (
                 review_features,
                 {
-                    "remind": skeptic_features,
                     "redo": engineer_features,
                     "continue": plan_gate,
                     "discard": finish,
@@ -670,7 +611,6 @@ def build(model: Any = None) -> Workflow:
             (
                 promote_gate,
                 {
-                    "remind": skeptic_model,
                     "retrain": engineer_model,
                     "features": engineer_features,
                     "replan": plan_gate,

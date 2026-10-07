@@ -24,7 +24,6 @@ export type Review = {
   verdict?: "pass" | "concerns";
   findings?: string[];
   recommendations?: string[];
-  recommended_model?: string;
 };
 
 export type Candidate = {
@@ -127,7 +126,6 @@ export type Config = {
   positive: string;
   false_alarm: string;
   ask_human: string[];
-  self_review_rounds: number;
   dataset: string;
   target: string;
   feature_view: string;

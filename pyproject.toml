@@ -24,6 +24,12 @@ dependencies = [
     "litellm>=1.85.7",
     "google-cloud-aiplatform[agent-engines,evaluation]>=1.156.0,<2.0.0",
     "protobuf>=6.31.1,<7.0.0",
+    # A model the agents may train (app/harness/catalog.py offers what is installed).
+    # On Linux (the Docker image, Agent Runtime) xgboost pulls ~290 MB of NVIDIA NCCL for
+    # GPU training; xgboost-cpu is the same `import xgboost` without it. No CPU-only wheel
+    # exists for macOS, where xgboost has no CUDA dependency anyway.
+    "xgboost>=3.2.0; sys_platform == 'darwin'",
+    "xgboost-cpu>=3.2.0; sys_platform != 'darwin'",
 ]
 requires-python = ">=3.11,<3.14"
 
@@ -37,7 +43,6 @@ dev = [
     "nbconvert>=7.17.1",
     "ipykernel>=7.3.0",
     "matplotlib>=3.11.2",
-    "xgboost>=3.2.0",
 ]
 
 [project.optional-dependencies]

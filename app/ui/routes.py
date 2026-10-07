@@ -255,7 +255,6 @@ def _pipeline_view() -> dict:
             "positive": config.positive,
             "false_alarm": config.false_alarm,
             "ask_human": list(config.ask_human),
-            "self_review_rounds": config.self_review_rounds,
             "dataset": config.dataset,
             "target": config.target,
             "feature_view": config.feature_view,

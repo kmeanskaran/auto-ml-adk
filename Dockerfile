@@ -1,37 +1,18 @@
-# Copyright 2026 Google LLC
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     https://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
 FROM python:3.12-slim
-
-# Install uv
 COPY --from=ghcr.io/astral-sh/uv:0.8.13 /uv /uvx /bin/
 
 WORKDIR /code
+COPY pyproject.toml README.md uv.lock ./
+COPY app ./app
+COPY config ./config
+COPY data/lending-loan ./data/lending-loan
 
-COPY ./pyproject.toml ./README.md ./uv.lock* ./
-
-COPY ./app ./app
-COPY ./config ./config
-# The loan dataset config.yml names (68 KB): read-only, so it ships in the image.
-# docker-compose mounts ./data over it locally.
-COPY ./data/lending-loan ./data/lending-loan
-
-RUN uv sync --frozen
+# Long timeout for slow networks; the cache keeps finished downloads between builds.
+ENV UV_HTTP_TIMEOUT=300
+RUN --mount=type=cache,target=/root/.cache/uv uv sync --frozen --no-dev
 
 ARG AGENT_VERSION=0.0.0
 ENV AGENT_VERSION=${AGENT_VERSION}
 
 EXPOSE 8080
-
 CMD ["uv", "run", "uvicorn", "app.fast_api_app:app", "--host", "0.0.0.0", "--port", "8080"]

@@ -25,14 +25,12 @@ fairness:
   attributes: [Gender, Married]
   min_ratio: 0.8
 
-# How much the team decides on its own. The skeptic reviews every stage; while it has
-# concerns, the team applies its recommendations itself for up to self_review_rounds
-# rounds before asking you. After that, only the reviews listed in ask_human wait for
-# you; the others the team settles (sound features continue, the proposed plan trains,
-# a sound model that beats production goes live).
+# Which reviews wait for you. The features come with the skeptic's one quick review,
+# the models with the harness's warnings. Reviews not listed the team settles when
+# they are sound (features pass, the proposed plan is valid, the best model has no
+# warning and beats production); anything unsound still comes to you.
 autonomy:
-  ask_human: [promote]               # any of: features, plan, promote
-  self_review_rounds: 1
+  ask_human: [features, promote]     # any of: features, plan, promote
 
 # The LLMs. The team (analyst's first look, engineer, skeptic) starts on `team`; the
 # console's model menu can switch it during a run. The chat analyst always uses
@@ -43,10 +41,15 @@ models:
   team_thinking: low
   analyst: gemini-3.5-flash
   analyst_thinking: low
+  # Prompt caching: each role's prompt and tools are stored once on Gemini (built in
+  # the background, so no call waits for it) and every call reuses them.
+  context_cache: true
 
 # Cost and speed guards per agent turn.
 limits:
-  tool_budget: 45                    # tool calls per turn; a wrap-up reminder at 2/3
-  fix_rounds: 2                      # times a stage is sent back for an incomplete hand-over
+  tool_budget: 20                    # tool calls per turn; a wrap-up reminder at 2/3
+  skeptic_tool_budget: 10            # the skeptic's: a quick review, not a second build
+  fix_rounds: 1                      # times a stage is sent back for an incomplete hand-over
+  cv_folds: 3                        # folds when few rows make the harness compare by CV
   compact_above_chars: 50000         # history size where old tool output gets trimmed
   script_seconds: 300                # an agent's script is stopped after this; the agents are told

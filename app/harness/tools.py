@@ -21,6 +21,7 @@ from typing import Any
 
 from google.adk.agents.callback_context import CallbackContext
 from google.adk.models.llm_request import LlmRequest
+from google.adk.models.llm_response import LlmResponse
 from google.adk.tools.tool_context import ToolContext
 from google.genai import types
 
@@ -45,7 +46,6 @@ CHART_TYPES = ("bar", "hbar", "line", "stacked")
 MAX_MATCHES, SEARCH_SUFFIXES = 60, (".py", ".json", ".md", ".txt", ".csv", ".log")
 # Tool calls per agent turn (config limits.tool_budget): past two thirds each result
 # carries a reminder to hand over, past the budget only check_stage and submit tools run.
-SOFT_BUDGET, HARD_BUDGET = 30, 45  # the defaults; budgets() reads the config
 FINISHING = {
     "check_stage",
     "submit_receipt",
@@ -72,8 +72,8 @@ OWNS = {
         "notes/engineer.md",
     ),
     "skeptic_features": ("checks/skeptic_*.py", "notes/skeptic.md"),
-    "engineer_model": ("src/train.py", "checks/*.py", "notes/engineer.md"),
     "skeptic_model": ("checks/skeptic_*.py", "notes/skeptic.md"),
+    "engineer_model": ("src/train.py", "checks/*.py", "notes/engineer.md"),
     "analyst": ("*.py", "charts/*.json", "notes.md"),
 }
 
@@ -406,7 +406,6 @@ def submit_review(
     findings: list[str],
     recommendations: list[str],
     tool_context: ToolContext,
-    recommended_model: str = "",
 ) -> dict[str, Any]:
     """Hands your review to the human: findings, then recommendations they can apply.
 
@@ -418,7 +417,6 @@ def submit_review(
         thing, a short reason, under 110 characters, e.g.
         "Remove `X`: it is filled in after the outcome, so the model would cheat".
         Empty if nothing should change.
-      recommended_model: Model stage only: the candidate key you would promote, or "".
 
     Returns:
       dict with the stored review.
@@ -434,20 +432,11 @@ def submit_review(
         recommendations, MAX_RECOMMENDATION_CHARS, "recommendation"
     ):
         return _error(issue)
-    if recommended_model:
-        candidates = (read_json(current() / "reports" / "evaluation.json") or {}).get(
-            "candidates", {}
-        )
-        if recommended_model not in candidates:
-            return _error(
-                f"recommended_model must be one of {sorted(candidates)} or empty."
-            )
     review = {
         "stage": stage,
         "verdict": verdict,
         "findings": _lines(findings),
         "recommendations": _lines(r for r in recommendations if r.strip()),
-        "recommended_model": recommended_model,
     }
     write_json(current() / "reviews" / f"{stage}.json", review)
     append_jsonl(current() / "reviews" / "history.jsonl", review)
@@ -576,9 +565,15 @@ def end_turn(callback_context: CallbackContext) -> None:
     _TURNS.pop(_turn_key(callback_context), None)
 
 
-def budgets() -> tuple[int, int]:
-    """The wrap-up reminder and the hard stop, from config limits.tool_budget."""
-    hard = settings.load().tool_budget
+def budgets(agent: str = "") -> tuple[int, int]:
+    """The wrap-up reminder and the hard stop, from config limits.tool_budget (the
+    skeptic's from limits.skeptic_tool_budget)."""
+    config = settings.load()
+    hard = (
+        config.skeptic_tool_budget
+        if agent.startswith("skeptic")
+        else config.tool_budget
+    )
     return hard * 2 // 3, hard
 
 
@@ -589,7 +584,7 @@ def budget(
     del args
     turn = _turn(tool_context)
     turn.calls += 1
-    _, hard = budgets()
+    _, hard = budgets(tool_context.agent_name)
     if turn.calls > hard and tool.name not in FINISHING:
         return _error(
             f"Tool budget spent ({hard} calls). Hand over now with what you "
@@ -604,13 +599,41 @@ def budget_reminder(
     """after_tool_callback: past the soft budget, every result says how many calls are left."""
     del args
     calls = _turn(tool_context).calls
-    soft, hard = budgets()
+    soft, hard = budgets(tool_context.agent_name)
     if calls < soft or tool.name in FINISHING or not isinstance(tool_response, dict):
         return None
     return {
         **tool_response,
         "budget": f"{calls} of {hard} tool calls used: wrap up and hand over.",
     }
+
+
+SUBMITS = {"submit_receipt", "submit_summary", "submit_review"}
+HANDED_OVER = "Handed over."
+
+
+def handed_over(
+    callback_context: CallbackContext, llm_request: LlmRequest
+) -> LlmResponse | None:
+    """before_model_callback: once a submit succeeded, the turn's closing line is
+    written here instead of by the model. ADK would otherwise ask the model once more
+    only to say it is done: a whole model call nobody reads. The turn still ends with
+    a plain final answer, so a paused workflow resumes where it was."""
+    del callback_context
+    last = (llm_request.contents or [None])[-1]
+    for part in (last.parts or []) if last else []:
+        response = part.function_response
+        if (
+            response is not None
+            and response.name in SUBMITS
+            and (response.response or {}).get("status") == "ok"
+        ):
+            return LlmResponse(
+                content=types.Content(
+                    role="model", parts=[types.Part(text=HANDED_OVER)]
+                )
+            )
+    return None
 
 
 def compact(callback_context: CallbackContext, llm_request: LlmRequest) -> None:
@@ -816,7 +839,9 @@ def _too_long(lines: list[str], limit: int, what: str) -> str:
             f"Each {what} must be one plain string, not {type(odd[0]).__name__}: "
             f"write it as a sentence, e.g. the text of {str(odd[0])[:60]}. "
         )
-    long = [line.strip() for line in lines if len(line.strip()) > limit]
+    # A line a few characters over is accepted: a rewrite costs a whole model call.
+    slack = limit // 10
+    long = [line.strip() for line in lines if len(line.strip()) > limit + slack]
     if not long:
         return ""
     return (
