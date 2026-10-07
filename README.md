@@ -1,149 +1,76 @@
 # ML Team
 
-A team of AI agents that works like a small ML team, built on Google's
-[Agent Development Kit (ADK)](https://adk.dev/). The agents write and run their own code,
-review each other's work once, and ask you where a human decision matters. Every step
-they take is traced.
+A team of AI agents that works like a small machine learning team. Give it a CSV and a
+goal; an analyst, an engineer and a skeptic explore the data, build features, train and
+compare models, review each other's work, and ask you only when a decision matters. The
+winning model is versioned and served on `/predict`.
 
-The example problem, from `notebooks/Loan-status-prediction.ipynb`: **decide, when a
-home-loan application is submitted, whether it will be approved**.
+Built on Google's [Agent Development Kit (ADK)](https://adk.dev/) with Gemini, scaffolded
+with [Agents CLI](https://google.github.io/agents-cli/), and deployed to Agent Runtime
+and Cloud Run with Terraform and GitHub Actions.
+
+The example problem: **decide, when a home-loan application is submitted, whether it
+will be approved.** Nothing about loans is in the agents. Only `config/config.yml` and
+the data are loan-specific.
 
 ## How it works
 
-The pipeline is an ADK Workflow with five stages.
+The agents don't decide by reading the data themselves. They write and run code that
+reads it, and decide from what that code finds. The harness fixes the order of the
+steps and the rules; the agents fill in the work.
 
-| # | Stage | Who | What happens |
-|---|-------|-----|--------------|
-| 1 | Understand the data | Analyst | The harness profiles every column; the analyst summarises what matters. Full report under `›`. |
-| 2 | Engineer features ✋ | Engineer, Skeptic, You | The engineer writes `data.py` and a row-wise `features.py`; the skeptic gives them one quick review; you continue or send changes back. |
-| 3 | Training plan | Team (or you) | The engineer proposes the models to compare and the metric that decides the winner. |
-| 4 | Train and evaluate | Engineer, Skeptic | The engineer trains with simple settings; the harness scores every candidate in parallel; the skeptic gives the results one quick review. |
-| 5 | Go live ✋ | You | Promote a candidate, keep it, retrain with feedback, change the features, or replan. |
+| Stage | Who | What happens |
+|---|---|---|
+| Understand the data | Analyst | Profiles every column and summarises what matters. |
+| Engineer features ✋ | Engineer, Skeptic, You | The engineer writes the features; the skeptic reviews once; you continue or send fixes back. |
+| Choose models | Team | The engineer proposes the models and the metric that picks the winner. |
+| Train and test | Engineer, Skeptic | The engineer trains; the harness scores every model; the skeptic reviews once. |
+| Go live ✋ | You | Put the winner live, keep it, send it back with fixes, or discard the run. |
 
-**When it asks you** is set in `config/config.yml` under `autonomy`:
+✋ = waits for you by default (`autonomy.ask_human` in `config/config.yml`).
 
-- Each agent works in one pass: it decides from the measured stats, writes the code
-  once, runs it and hands over. No agent loops on its own.
-- The skeptic gives each stage one quick review (at most one check script, a small
-  tool budget: `limits.skeptic_tool_budget`); you are the second reviewer.
-- A review listed in `ask_human` (by default `features` and `promote`) waits for you
-  with the skeptic's findings and the harness's warnings; you tick the
-  recommendations to send back.
-- The others the team settles when they are sound: features the skeptic passed
-  continue, a valid proposed plan trains, and a model the skeptic passed with no
-  warnings goes live if it beats production and doing nothing. Anything else comes
-  to you.
+**The rules the harness enforces:**
 
-Every decision, the team's or yours, lands in the run's `decisions.jsonl`.
+- **No agent scores its own model.** The harness retrains every candidate, picks the
+  winner on cross-validation, then tests it once on rows no model has seen.
+- **Mistakes have a price.** Models are ranked by the cost of their mistakes per 1,000
+  applications (a wrong approval costs twice a missed one) and must beat doing nothing.
+- **Fair lending.** Approval rates are compared across `Gender` and `Married`. A gap
+  below the four-fifths rule is a warning, and that model never goes live without a person.
+- **One review, then you.** The skeptic reviews each stage once; you are the second
+  reviewer. Every decision, the team's or yours, is logged with who made it.
+- **Agent code is contained.** Scripts run in a separate process with no access to the
+  server's secrets.
 
-Along the way:
+**What every run keeps:** a full trace (`runs/<run>/logs/`), versioned features
+(`feature_store/`), versioned models (`registry/`), and a run history the next run
+builds on.
 
-- **Tracing**: an ADK plugin (`app/harness/trace.py`) records every agent, model
-  reply, tool call and decision. Per run, in `runs/<run>/logs/`:
-  `activity.log` (one plain line per step, also shown in the console's Activity panel
-  and on the server's terminal), `trace.jsonl` (the same steps as records: arguments,
-  results, seconds, tokens), and `code/` (a numbered copy of every file an agent
-  wrote, so each version of each script traces back to who wrote it and when).
-- **Feature store**: approved features are saved as a version (definition, transform
-  code, train/valid/test tables). Training and serving use the same transform.
-- **Model registry**: every kept model is a version with its metrics and lineage.
-  The model library compares versions, rolls back, or removes one.
-- **One run per session**: the run's folder name is stored in the ADK session state
-  (`run`), and every step binds to it (`app/harness/scope.py`), so sessions running side
-  by side, or a run resumed by another server, each write to their own folder.
-- **Run history**: `runs/index.jsonl` records what every run tried, scored and decided
-  (`GET /api/runs`). The next run's engineer and skeptic get the production model's
-  score to beat and the lessons of the last runs on the same data, as hypotheses to
-  test, never as findings.
-- **Fair lending**: the harness compares each candidate's approval rate, and its share
-  of eligible applicants approved, across the groups of `fairness.attributes`. A gap
-  below `min_ratio` (the four-fifths rule) is a warning, and such a model never goes
-  live without a human, whatever `autonomy` says. A feature built from a protected
-  attribute is pointed out to the skeptic.
-- **Few tool calls, small prompts**: each request carries a briefing (the data at a
-  glance, the analyst's findings, past runs) so agents do not re-read reports;
-  `write_and_run` and `search` replace common pairs of calls; a file an agent already
-  has is not sent again while unchanged; overlong review lines are all named at once;
-  a turn has a tool budget (a reminder at 30 calls, only hand-over tools after 45);
-  and once a turn's history passes 120k characters, copies a later read, write or run
-  superseded are elided from what the model is sent (the session keeps everything).
-- **Prompt caching**: each role prompt is a `static_instruction`, the stable head of
-  every request, and the App sets `ContextCacheConfig`: Gemini caches it server-side,
-  providers that cache a marked prefix get the marks through LiteLLM, and Ollama reuses
-  its KV cache for the unchanged prefix.
-- **Analyst chat**: answers questions about the data, the features, the models and
-  production traffic, with stats and a chart; ask for "a report on …" to get sections,
-  tables and up to three diagrams. It starts from a briefing of what the team has now
-  (live model, feature store, latest run) and uses `kit.py` (`app/harness/analyst_kit.py`),
-  tested helpers for rates with 95% intervals, whether a gap is real (chi-square,
-  Cramér's V), drift between the training data and production (PSI), and the live model's scores
-  and permutation importance. It answers nothing else.
-- **Skeptic**: at most three recommendations, ranked by impact, and only ones that would
-  change the result. The team applies them itself; when you are asked, they come
-  pre-ticked, so improving is one click.
-- **Console**: an overview (live model, feature store, past runs, when you are asked),
-  the pipeline next to the analyst, and tabs for the activity trace, the feature store
-  (every version and its features, which models use it, protected-attribute flags), the
-  model library and past runs.
-
-Metrics are always computed by the harness, never reported by the agents themselves.
+**Keeping the LLM bill down:** agents get a briefing instead of re-reading reports, a
+tool budget per turn, trimmed history on long turns, and Gemini context caching for each
+role's fixed instructions.
 
 ## Quick start
 
-You need [Docker](https://docs.docker.com/get-docker/), [uv](https://docs.astral.sh/uv/)
-(for the data script) and a Gemini API key from [Google AI Studio](https://aistudio.google.com/apikey)
-as `GEMINI_API_KEY` in `.env` (or set `ML_MODEL` to another LiteLLM model, e.g.
-`ollama_chat/gpt-oss:120b-cloud` with [Ollama](https://ollama.com/)). `./run.sh local`
-needs Node.js instead of Docker.
+Needs Docker (or [uv](https://docs.astral.sh/uv/) and Node for `./run.sh local`).
 
 ```bash
-cp .env.example .env                           # local settings (run.sh does this too)
+cp .env.example .env    # your Google Cloud project, or a GEMINI_API_KEY
+./run.sh                # backend on :8000, console on http://localhost:3000
 ```
 
-The data comes with the repo: the [Loan Prediction](https://datahack.analyticsvidhya.com/contest/practice-problem-loan-prediction-iii/)
-`train.csv` and `test.csv`, in `data/lending-loan/`. The team learns from `train.csv`
-(614 labelled applications); `test.csv` (367 unlabelled ones) plays production
-traffic. `dataset` and `traffic` in `config/config.yml` name the two files; point them
-at your own CSVs in `data/` to give the team another problem.
-
-Start the team. `run.sh` builds two containers with `docker-compose.yml`, the
-backend and the console, waits until both are healthy, then follows the agents' log:
+Open the console and press **Run pipeline**.
 
 ```bash
-./run.sh                 # console http://localhost:3000, backend http://localhost:8000
-./run.sh logs            # follow the agents' log again (Ctrl+C stops following only)
-./run.sh status          # what is running
-./run.sh down            # stop both
-./run.sh local           # no Docker: uv backend + Next.js dev server on this machine
+./run.sh logs           # follow the agents' log
+./run.sh status         # what is running
+./run.sh down           # stop
 ```
-
-`run.sh` checks for the data and for the model's key (or Ollama) first. `BACKEND_PORT` and `FRONTEND_PORT`
-pick other ports; `ML_MODEL` picks another LLM. Runs, models, features and sessions
-live on your machine (`runs/`, `registry/`, `feature_store/`, `.adk/`), mounted into
-the backend container, so a rebuild keeps them.
-
-Open the console, press **Run pipeline** and watch the Activity panel.
-
-## Architecture
-
-```
-browser ──► frontend (Next.js, :3000) ──/api/*──► backend (FastAPI + ADK, :8000)
-                                                    ├─ /api      console API (JSON)
-                                                    ├─ /predict  served models
-                                                    └─ agents ── Ollama on the host
-```
-
-- **backend** (`app/`, root `Dockerfile`): the ADK workflow and agents, the harness,
-  the analyst, the JSON API the console uses (`/api/view`, `/api/pipeline/*`,
-  `/api/chat`, `/api/registry/*`), and `/predict`. It serves no pages.
-- **frontend** (`frontend/`, Next.js + React + TypeScript): the console. Its
-  `/api/*` route forwards to the backend at `BACKEND_URL`, read at runtime, so the
-  browser only ever talks to the frontend and no CORS setup is needed.
 
 ## Scoring applications
 
-Once a model is promoted, `POST /predict` scores raw application records with the
-production version. `POST /predict/<version>` scores with any version in the library.
+Once a model is live, `POST /predict` scores raw applications with it.
+`POST /predict/<version>` uses any version in the model library.
 
 ```bash
 curl -s -X POST http://localhost:8000/predict \
@@ -155,66 +82,51 @@ curl -s -X POST http://localhost:8000/predict \
 ```
 
 ```json
-{"version": "v1", "predictions": [{"id": "LP001015", "score": 0.874551, "flag": 1}]}
+{"version": "v1", "predictions": [{"id": "LP001015", "score": 0.842117, "flag": 1}]}
 ```
 
-`score` is the chance the application is approved; `flag` is 1 when the score reaches
-the version's threshold, chosen to minimise the business cost in `config/config.yml`.
-A record missing a needed column returns 422; an unknown version returns 404.
+`score` is the chance of approval; `flag` is 1 when it reaches the threshold the harness
+chose to minimise the cost of mistakes.
+
+## Deploying to Google Cloud
+
+- **Backend** (ADK agents, harness, `/predict`) runs on **Agent Runtime**.
+- **Console** (Next.js) runs on **Cloud Run**.
+- **Infrastructure** is Terraform in `deployment/terraform/`; runs, models and features
+  persist in a Cloud Storage bucket.
+- **CI/CD**: `.github/workflows/deploy.yml` runs checks, builds, and deploys on every push
+  to `main`, signing in with Workload Identity (no stored keys).
+- **Tracing**: every run lands in Cloud Trace; prompts and responses go to BigQuery.
+
+The full setup, from an empty Google Cloud project to a live deploy, is in
+[SETUP.md](SETUP.md).
 
 ## Configuration
 
-`config/config.yml` holds the dataset, the target column and its positive value
-(`Y`), the feature view name, the prediction moment, the business costs of a missed
-approval and a wrong approval, the protected attributes the fair-lending check
-compares (`fairness`), and how much the team decides alone (`autonomy`).
-
-| Environment variable | Default | Purpose |
-|---|---|---|
-| `ML_MODEL` | (unset) | Overrides `models.team` in `config/config.yml`, e.g. `ollama_chat/gpt-oss:120b-cloud` |
-| `OLLAMA_API_BASE` | `http://localhost:11434` | Ollama server |
-| `ML_RUNS_ROOT` | `runs/` | Where pipeline runs are written |
-| `ML_REGISTRY_ROOT` | `registry/` | Model registry |
-| `ML_FEATURE_STORE_ROOT` | `feature_store/` | Feature store |
+`config/config.yml` is the one config file: the dataset and target, the business costs of
+mistakes, the protected attributes, which decisions wait for you, the Gemini models and
+the per-turn limits. Changes apply from the next run.
 
 ## Project layout
 
 ```
 app/
-  agent.py           root agent: the pipeline workflow
-  pipeline.py        stages, team and human reviews, routing
-  agents.py          analyst, engineer and skeptic prompts
-  harness/           tools, stage contracts, profiling, feature store,
-                     evaluation, model registry, sandboxed code runner,
-                     tracing plugin (trace.py)
-  ui/                console API (/api) and serving (/predict) routes
-  fast_api_app.py    FastAPI server
-frontend/            the console: Next.js app (components/, lib/, app/), Dockerfile
-docker-compose.yml   backend + frontend containers; ./run.sh drives it
-config/config.yml    the one config: business settings, models, limits
-data/lending-loan/   train.csv and test.csv, the example data (also in the image)
-notebooks/           the loan notebook the pipeline automates
-runs/                one folder per pipeline run (logs/ holds the trace);
-                     runs/analysis for the chat
-feature_store/       versioned feature views
-registry/            versioned models; production.json is what /predict serves
+  agent.py           the ADK App: workflow, plugins, context caching
+  pipeline.py        the stages, reviews and routing
+  agents.py          analyst, engineer and skeptic
+  harness/           evaluation, feature store, model registry, tools, tracing
+  ui/                console API (/api) and serving (/predict)
+frontend/            the console (Next.js)
+config/config.yml    the one config
+data/lending-loan/   example data: train.csv and test.csv
+deployment/          Terraform and the project ID
 tests/               unit, integration and eval tests
 ```
 
 ## Development
 
 ```bash
-uv run pytest tests/unit                       # harness, registry, feature store, workflow
-uvx ruff check app tests                       # lint
-(cd frontend && npm run typecheck && npm run build)   # console
+uv run pytest tests/unit                               # unit tests
+uvx ruff check app tests                               # lint
+(cd frontend && npm run typecheck && npm run build)    # console
 ```
-
-The project was scaffolded with [Agents CLI](https://google.github.io/agents-cli/);
-`agents-cli playground`, `agents-cli eval` and `agents-cli deploy` work from the repo
-root.
-
-## Status
-
-- Runs on Gemini (API key) by default, or on Ollama. Deployment on Agent Runtime is next.
-- Agent-written code runs in a separate process with no access to the server's
-  secrets. Network isolation comes from the deploy target's container.
