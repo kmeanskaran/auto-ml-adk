@@ -7,12 +7,13 @@ COPY app ./app
 COPY config ./config
 COPY data/lending-loan ./data/lending-loan
 
-# Long timeout for slow networks; the cache keeps finished downloads between builds.
+# Long timeout for slow networks. No BuildKit cache mount: Agent Runtime builds with
+# the classic Docker builder, which rejects --mount.
 ENV UV_HTTP_TIMEOUT=300
-RUN --mount=type=cache,target=/root/.cache/uv uv sync --frozen --no-dev
+RUN uv sync --frozen --no-dev
 
 ARG AGENT_VERSION=0.0.0
 ENV AGENT_VERSION=${AGENT_VERSION}
 
 EXPOSE 8080
-CMD ["uv", "run", "uvicorn", "app.fast_api_app:app", "--host", "0.0.0.0", "--port", "8080"]
+CMD ["uv", "run", "--no-sync", "uvicorn", "app.fast_api_app:app", "--host", "0.0.0.0", "--port", "8080"]
