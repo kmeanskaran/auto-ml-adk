@@ -15,7 +15,7 @@
 #   4. Terraform: service accounts, GitHub login, the agent, logs, telemetry (~10 min)
 #   5. with --restore: the saved runs and models into <id>-state
 #   6. GitHub: turn the deploy workflow on, set its variables
-#   7. start the deploy workflow (checks → build → deploy); its summary shows the console URL
+#   7. start the deploy workflow (checks → build → deploy)
 #
 # Needs: gcloud (logged in, plus application-default login), terraform ≥ 1.11, gh
 # (logged in), and deployment/terraform/ml-team-adk/console.auto.tfvars.
@@ -156,7 +156,8 @@ cat <<EOF
 
 ✓ Restarted $PROJECT_ID. Next:
   - follow the deploy:  gh run watch --repo $REPO
-  - its summary shows the console URL; open it and hard-refresh (Cmd+Shift+R)
+  - open the console from Cloud Run (ml-team-console) in your Google Cloud project;
+    its URL is never printed in the deploy logs, which are public
   - point your budget alert at $PROJECT_ID: Billing → Budgets & alerts
   - commit deployment/project.env and $TF_DIR/vars/env.tfvars if the ID changed
 EOF

@@ -10,7 +10,8 @@
 #            image built to prove the Dockerfile works, not pushed: Agent Runtime takes
 #            no prebuilt image (agents-cli deploy uploads the source; Google builds it)
 #   deploy   backend → Agent Runtime; console → Cloud Run from build's image, open to
-#            anyone; then checks the deployed backend answers
+#            anyone; then checks the deployed backend answers.
+#            No app URL is ever printed: the repository and its logs are public
 #
 # build and deploy sign in to Google Cloud through Workload Identity Federation (no
 # keys), which trusts only this repository's main branch
@@ -95,8 +96,6 @@ jobs:
     permissions:
       contents: read
       id-token: write # Workload Identity Federation
-    env:
-      AGENT_URL: https://${{ vars.GCP_REGION }}-aiplatform.googleapis.com/reasoningEngines/v1/projects/${{ vars.GCP_PROJECT_ID }}/locations/${{ vars.GCP_REGION }}/reasoningEngines/${{ vars.AGENT_ENGINE_ID }}/api
     steps:
       - uses: actions/checkout@v4
       - uses: google-github-actions/auth@v2
@@ -106,8 +105,20 @@ jobs:
       - uses: google-github-actions/setup-gcloud@v2
       - uses: astral-sh/setup-uv@v6
 
+      # The repository is public, and so are its Actions logs: no app URL may appear in
+      # them. AGENT_URL is built here and masked (a job-level env would be printed in
+      # every step's header), and every deploy command's output passes through
+      # hide_urls. Nothing is written to the run summary.
+      - name: Agent endpoint (masked)
+        run: |
+          AGENT_URL="https://$REGION-aiplatform.googleapis.com/reasoningEngines/v1/projects/$PROJECT/locations/$REGION/reasoningEngines/${{ vars.AGENT_ENGINE_ID }}/api"
+          echo "::add-mask::$AGENT_URL"
+          echo "AGENT_URL=$AGENT_URL" >> "$GITHUB_ENV"
+
       - name: Backend → Agent Runtime
         run: |
+          set -o pipefail # a failed deploy must fail the step, not sed
+          hide_urls() { sed -E 's#https?://[^[:space:]"'"'"')]+#<url hidden>#g'; }
           uv tool install google-agents-cli==1.7.0
           ENV="GOOGLE_GENAI_USE_VERTEXAI=true,GOOGLE_CLOUD_LOCATION=global,ML_STATE_BUCKET=${{ vars.STATE_BUCKET }},OTEL_TO_CLOUD=true"
           if [ -n "${{ vars.ML_MODEL }}" ]; then ENV="$ENV,ML_MODEL=${{ vars.ML_MODEL }}"; fi
@@ -115,29 +126,30 @@ jobs:
             --project "$PROJECT" --region "$REGION" --no-confirm-project \
             --service-account "${{ vars.APP_SA }}" \
             --update-env-vars "$ENV" \
-            --labels "commit=${GITHUB_SHA::12}"
+            --labels "commit=${GITHUB_SHA::12}" 2>&1 | hide_urls
 
-      # Open to anyone: the console's URL needs no login. One instance, so its
-      # requests to the agent stay under Agent Runtime's limit per caller.
+      # One instance, so its requests to the agent stay under Agent Runtime's limit
+      # per caller.
       - name: Console → Cloud Run (the image build made)
         run: |
+          set -o pipefail # a failed deploy must fail the step, not sed
+          hide_urls() { sed -E 's#https?://[^[:space:]"'"'"')]+#<url hidden>#g'; }
           gcloud run deploy ml-team-console --quiet \
             --project "$PROJECT" --region "$REGION" \
             --image "$IMAGE:$GITHUB_SHA" \
             --service-account "${{ vars.CONSOLE_SA }}" \
             --set-env-vars "BACKEND_URL=$AGENT_URL" \
             --clear-secrets --allow-unauthenticated --no-iap \
-            --min-instances 0 --max-instances 1
+            --min-instances 0 --max-instances 1 2>&1 | hide_urls
 
       - name: Check the deployed backend answers
         run: |
           TOKEN="$(gcloud auth print-access-token)"
           for attempt in 1 2 3 4 5 6; do
             code="$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $TOKEN" "$AGENT_URL/api/view")"
-            echo "attempt $attempt: /api/view → $code"
+            echo "attempt $attempt: backend → $code"
             [ "$code" = 200 ] && break
             [ "$attempt" = 6 ] && exit 1
             sleep 20 # the agent may be starting from zero
           done
-          URL="$(gcloud run services describe ml-team-console --project "$PROJECT" --region "$REGION" --format='value(status.url)')"
-          echo "Console: $URL (commit ${GITHUB_SHA::12})" >> "$GITHUB_STEP_SUMMARY"
+          echo "Deployed commit ${GITHUB_SHA::12}." >> "$GITHUB_STEP_SUMMARY"

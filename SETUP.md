@@ -173,11 +173,8 @@ agents-cli deploy --project $PROJECT_ID --region $REGION --no-confirm-project \
   --update-env-vars GOOGLE_GENAI_USE_VERTEXAI=true,GOOGLE_CLOUD_LOCATION=global,ML_STATE_BUCKET=$STATE_BUCKET,OTEL_TO_CLOUD=true
 ```
 
-The console's URL:
-
-```bash
-gcloud run services describe ml-team-console --region $REGION --format='value(status.url)'
-```
+The console's URL is never printed in the workflow's logs or summary, which are public.
+Open it from Cloud Run (`ml-team-console`) in the Google Cloud console.
 
 ---
 
