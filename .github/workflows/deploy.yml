@@ -15,8 +15,11 @@
 #
 # build and deploy sign in to Google Cloud through Workload Identity Federation (no
 # keys), which trusts only this repository's main branch
-# (deployment/terraform/ml-team-adk/ml_team.tf). The repository variables they read
-# come from `terraform output github_variables`.
+# (deployment/terraform/ml-team-adk/ml_team.tf). The repository variables and secrets
+# they read come from `terraform output github_variables` (scripts/set_github_vars.sh).
+# WIF_PROVIDER and AGENT_ENGINE_ID are secrets, not variables: they hold the project
+# number and the agent's ID, and the console's Cloud Run URL is built from the project
+# number. GitHub masks secrets in the public logs, and each job masks the number too.
 
 name: deploy
 
@@ -59,14 +62,21 @@ jobs:
     if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     needs: checks
     runs-on: ubuntu-latest
+    env:
+      DOCKER_BUILD_RECORD_UPLOAD: false # no .dockerbuild artifacts: public on a public repo
+      DOCKER_BUILD_SUMMARY: false
     permissions:
       contents: read
       id-token: write # Workload Identity Federation
     steps:
+      - name: Mask the project number
+        env:
+          WIF_PROVIDER: ${{ secrets.WIF_PROVIDER }}
+        run: echo "::add-mask::$(echo "$WIF_PROVIDER" | cut -d/ -f2)"
       - uses: actions/checkout@v4
       - uses: google-github-actions/auth@v2
         with:
-          workload_identity_provider: ${{ vars.WIF_PROVIDER }}
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
           service_account: ${{ vars.DEPLOYER_SA }}
       - uses: google-github-actions/setup-gcloud@v2
       - name: Docker → Artifact Registry
@@ -97,10 +107,14 @@ jobs:
       contents: read
       id-token: write # Workload Identity Federation
     steps:
+      - name: Mask the project number
+        env:
+          WIF_PROVIDER: ${{ secrets.WIF_PROVIDER }}
+        run: echo "::add-mask::$(echo "$WIF_PROVIDER" | cut -d/ -f2)"
       - uses: actions/checkout@v4
       - uses: google-github-actions/auth@v2
         with:
-          workload_identity_provider: ${{ vars.WIF_PROVIDER }}
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
           service_account: ${{ vars.DEPLOYER_SA }}
       - uses: google-github-actions/setup-gcloud@v2
       - uses: astral-sh/setup-uv@v6
@@ -111,7 +125,7 @@ jobs:
       # hide_urls. Nothing is written to the run summary.
       - name: Agent endpoint (masked)
         run: |
-          AGENT_URL="https://$REGION-aiplatform.googleapis.com/reasoningEngines/v1/projects/$PROJECT/locations/$REGION/reasoningEngines/${{ vars.AGENT_ENGINE_ID }}/api"
+          AGENT_URL="https://$REGION-aiplatform.googleapis.com/reasoningEngines/v1/projects/$PROJECT/locations/$REGION/reasoningEngines/${{ secrets.AGENT_ENGINE_ID }}/api"
           echo "::add-mask::$AGENT_URL"
           echo "AGENT_URL=$AGENT_URL" >> "$GITHUB_ENV"
 

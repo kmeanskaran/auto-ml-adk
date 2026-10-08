@@ -134,7 +134,9 @@ terraform output github_variables       # for part 7
 
 ## 7. GitHub variables
 
-No secrets: GitHub signs in to Google Cloud with Workload Identity.
+No keys: GitHub signs in to Google Cloud with Workload Identity. `WIF_PROVIDER` and
+`AGENT_ENGINE_ID` are set as secrets so GitHub masks them in the public logs (the
+project number in `WIF_PROVIDER` is part of the console's URL); the rest are variables.
 
 ```bash
 gh auth login

@@ -122,10 +122,17 @@ pull request ──► checks
 | `build` | Builds the backend image to test the Dockerfile (not pushed). Pushes the console image to Artifact Registry as `ml-team-console:<commit>`. | deployer |
 | `deploy` | `agents-cli deploy` (backend), `gcloud run deploy` (console), then waits for the backend's `/api/view` to answer | deployer |
 
-The workflow reads **repository variables, not secrets**. They are identifiers, and
-`scripts/set_github_vars.sh` sets them from `terraform output github_variables`:
-`GCP_PROJECT_ID`, `GCP_REGION`, `WIF_PROVIDER`, `DEPLOYER_SA`, `APP_SA`, `CONSOLE_SA`,
-`STATE_BUCKET` and `AGENT_ENGINE_ID`, plus an optional `ML_MODEL`.
+The workflow needs no keys. `scripts/set_github_vars.sh` sets what it reads from
+`terraform output github_variables`:
+
+| Kind | Names |
+|---|---|
+| Repository variables | `GCP_PROJECT_ID`, `GCP_REGION`, `DEPLOYER_SA`, `APP_SA`, `CONSOLE_SA`, `STATE_BUCKET`, and optionally `ML_MODEL` |
+| Repository secrets | `WIF_PROVIDER`, `AGENT_ENGINE_ID` |
+
+The two secrets aren't keys either. They are secrets so that GitHub masks them in the
+public logs: `WIF_PROVIDER` contains the project number, which the console's Cloud Run
+URL is built from, and `AGENT_ENGINE_ID` identifies the agent.
 
 ## Deploy your own copy
 
@@ -223,11 +230,14 @@ The backend is never public. Agent Runtime only accepts callers with
 The repository is public, and so are its GitHub Actions logs and run summaries. No URL
 of the deployed app (the console or the agent's endpoint) is committed or printed:
 
+- The project number and the agent's ID are repository secrets, which GitHub masks.
+  Each job also masks the project number on its own, since some tools print it.
 - The deploy job builds the agent's endpoint inside a step and masks it with
   `::add-mask::`, so it never appears in a log.
 - The output of `agents-cli deploy` and `gcloud run deploy` passes through `hide_urls`,
   which replaces every URL with `<url hidden>`.
-- Nothing about the deployment is written to the run summary except the commit.
+- Nothing about the deployment is written to the run summary except the commit, and
+  the Docker build jobs upload no build-record artifacts.
 - Don't paste the console URL into issues, pull requests, docs or commit messages.
 
 
