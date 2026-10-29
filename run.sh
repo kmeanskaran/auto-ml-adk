@@ -69,7 +69,7 @@ urls() {
   echo
   echo "  Console   http://localhost:$FRONTEND_PORT"
   echo "  Backend   http://localhost:$BACKEND_PORT   (POST /predict, ADK dev UI at /dev-ui)"
-  echo "  Agents    $MODEL_SHOWN (analyst: $(sed -n 's/^  analyst: *\([^ #]*\).*/\1/p' config/config.yml))"
+  echo "  Agents    $MODEL_SHOWN (every agent; the console's model menu switches it)"
   echo "  Traces    runs/<run>/logs/"
   echo
 }

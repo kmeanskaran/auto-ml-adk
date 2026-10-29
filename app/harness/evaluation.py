@@ -1,20 +1,20 @@
 """Evaluation and serving bundles, done by the harness rather than the engineer.
 
-The engineer chooses and tunes each model; the harness decides how it is fitted
-and scored, so the numbers the human decides on are never self-reported and never
-contaminated by what train.py did with the validation rows:
+The engineer chooses and tunes each model; the harness fits and scores it, so the
+numbers the human decides on are never self-reported. One simple protocol:
 
-  fit a fresh copy on train          → score valid: pick the winner and the threshold
-  refit a fresh copy on train+valid  → score test at that threshold; serve this one
+  fit a fresh copy on train → score test → the plan's metric picks the winner
 
-How the winner is compared follows the data: when the split does not follow time
-(the engineer's split.ordered_by is null) and valid is small, one split is too noisy,
-so the winner and threshold come from k-fold out-of-fold scores over train+valid
-(config limits.cv_folds). Candidates are fitted in parallel, one CPU each.
+The plan's metric is the business one by default: the expected loss per 1,000,
+which weighs every mistake by how sure the model was, so two models practically never
+tie. The cut-off comes from the costs, not the data: a record is flagged when its
+score reaches false_alarm / (false_alarm + missed), e.g. 2 / (2 + 1) = 0.67. The model
+that was scored is the model that is served.
+Candidates are fitted in parallel, one CPU each.
 
-It also reports calibration (mean score vs outcome rate on valid and test) and, when
-the split follows time, a drift report: the features whose test values move the
-scores most (without a time order it is sampling noise, so it is skipped).
+It also reports calibration (mean score vs outcome rate on test) and, when the split
+follows time, a drift report: the features whose test values move the scores most
+(without a time order it is sampling noise, so it is skipped).
 """
 
 from __future__ import annotations
@@ -29,12 +29,11 @@ from typing import Any
 from app import settings
 from app.harness import catalog, project
 from app.harness.environment import ProjectEnvironment, cpus
-from app.harness.project import write_json
+from app.harness.project import PLAIN_DTYPES, write_json
 
 MODELS_DIR = "artifacts/models"  # the engineer's tuned models
-FINAL_DIR = "artifacts/final"  # the harness's refits on train+valid: what gets served
+FINAL_DIR = "artifacts/final"  # the harness's fits on train: what gets served
 SMOKE_ROWS = 50
-CV_BELOW = 300  # valid rows under which an unordered split is compared by CV
 
 EVALUATE = r"""
 import glob, json, os, time
@@ -44,33 +43,22 @@ import numpy as np
 import pandas as pd
 from sklearn import metrics as M
 from sklearn.base import clone
-
+__PLAIN__
 fd = os.environ["FEATURE_DIR"]
 definition = json.load(open(os.path.join(fd, "definition.json")))
 outcome, features = definition["outcome_column"], list(definition["features"])
 cost_fn, cost_fp = float(os.environ["COST_FN"]), float(os.environ["COST_FP"])
-tables = {s: pd.read_parquet(os.path.join(fd, "offline", f"{s}.parquet")) for s in ("train", "valid", "test")}
+tables = {s: plain(pd.read_parquet(os.path.join(fd, "offline", f"{s}.parquet"))) for s in ("train", "test")}
 y = {s: t[outcome].to_numpy().astype(int) for s, t in tables.items()}
 wanted = set(json.loads(os.environ.get("MODELS", "[]")))
 ordered = bool((definition.get("split") or {}).get("ordered_by"))
-both = pd.concat([tables["train"], tables["valid"]], ignore_index=True)
-y_both = both[outcome].to_numpy().astype(int)
-# With little comparison data and no time order, one split is too noisy to pick a
-# winner: compare on out-of-fold scores over train+valid instead.
-folds_n = min(int(os.environ["CV_FOLDS"]), int(np.bincount(y_both, minlength=2).min()))
-cv = not ordered and len(tables["valid"]) < int(os.environ["CV_BELOW"]) and folds_n >= 2
-y_sel = y_both if cv else y["valid"]
-if cv:
-    from sklearn.model_selection import StratifiedKFold
-    folds = list(StratifiedKFold(folds_n, shuffle=True, random_state=0).split(both[features], y_both))
+# Flag when the expected cost of flagging is the lower one: score >= fp / (fp + fn).
+T = round(cost_fp / (cost_fp + cost_fn), 4)
 
-def cost(yy, p, t):
-    flag = p >= t
-    return 1000 * (cost_fn * np.sum(~flag & (yy == 1)) + cost_fp * np.sum(flag & (yy == 0))) / len(yy)
-
-def threshold(yy, p):
-    grid = np.round(np.linspace(0.01, 0.99, 99), 2)
-    return float(grid[int(np.argmin([cost(yy, p, t) for t in grid]))])
+# Expected loss: each record costs its mistake's price times how sure the model was of
+# the wrong answer, so a confident mistake costs more than a hesitant one.
+def cost(yy, p):
+    return 1000 * (cost_fn * np.sum((yy == 1) * (1 - p)) + cost_fp * np.sum((yy == 0) * p)) / len(yy)
 
 def metrics(yy, p, t):
     p = np.clip(p.astype(float), 1e-6, 1 - 1e-6)
@@ -85,38 +73,26 @@ def metrics(yy, p, t):
         "accuracy": M.accuracy_score(yy, flag),
         "log_loss": M.log_loss(yy, p, labels=[0, 1]),
         "brier": M.brier_score_loss(yy, p),
-        "cost_per_1000": cost(yy, p, t),
+        "cost_per_1000": cost(yy, p),
     }
     return {k: (None if v is None else round(float(v), 4)) for k, v in out.items()}
 
-prior = float((y_both if cv else y["train"]).mean())
-flat_sel, flat_test = np.full(len(y_sel), prior), np.full(len(y["test"]), prior)
-t0 = threshold(y_sel, flat_sel)
-baseline = {"threshold": t0, "valid": metrics(y_sel, flat_sel, t0), "test": metrics(y["test"], flat_test, t0)}
+# No model: every record gets the training rate as its score.
+flat = np.full(len(y["test"]), float(y["train"].mean()))
+baseline = {"threshold": T, "test": metrics(y["test"], flat, T)}
 
-def fitted(model, parts):  # a fresh copy of the engineer's model, fitted on these tables only
-    X = pd.concat([tables[p][features] for p in parts], ignore_index=True)
-    Y = pd.concat([tables[p][outcome] for p in parts], ignore_index=True)
-    return clone(model).fit(X, Y)
-
-def compared(model):  # the scores the winner and threshold are picked on
-    if not cv:
-        return fitted(model, ["train"]).predict_proba(tables["valid"][features])[:, 1]
-    p = np.zeros(len(both))
-    for fit_rows, score_rows in folds:
-        m = clone(model).fit(both[features].iloc[fit_rows], both[outcome].iloc[fit_rows])
-        p[score_rows] = m.predict_proba(both[features].iloc[score_rows])[:, 1]
-    return p
+def fitted(model):  # a fresh copy of the engineer's model, fitted on train only
+    return clone(model).fit(tables["train"][features], tables["train"][outcome])
 
 def calibration(yy, p):
     return {"mean_score": round(float(p.mean()), 4), "outcome_rate": round(float(yy.mean()), 4)}
 
 # Features whose test values move the scores most: give the test rows this feature's
-# values from the fitting rows and see how far the mean score moves.
+# values from the training rows and see how far the mean score moves.
 def drift(model, top=5):
     if not ordered:  # same period: the shifts would be sampling noise
         return []
-    test, ref = tables["test"][features], pd.concat([tables["train"][features], tables["valid"][features]])
+    test, ref = tables["test"][features], tables["train"][features]
     base = float(model.predict_proba(test)[:, 1].mean())
     moves = []
     for f in features:
@@ -152,28 +128,22 @@ def fairness(yy, p, t):  # per group: rows, share flagged, share of positives fl
                              "recall": round(float(flag[pos].mean()), 4) if pos.any() else None})
     return out
 
-# Honest protocol, enforced here whatever train.py did with valid:
-#   fit on train        -> score valid: choose the winner and the threshold
-#   refit on train+valid -> score test at that threshold; this is the model served
 def one_cpu(model):  # candidates run side by side, so each keeps to one CPU
     jobs = {k: 1 for k in model.get_params() if k == "n_jobs" or k.endswith("__n_jobs")}
     return model.set_params(**jobs) if jobs else model
 
+# Honest protocol, enforced here whatever train.py did: fit on train, score test.
 def evaluated(path):
     name = os.path.splitext(os.path.basename(path))[0]
     try:
-        model = one_cpu(joblib.load(path))
-        pv = compared(model)
-        t = threshold(y_sel, pv)
-        final = fitted(model, ["train", "valid"])
+        final = fitted(one_cpu(joblib.load(path)))
         started = time.time()
         pt = final.predict_proba(tables["test"][features])[:, 1]
         ms = 1000 * (time.time() - started) / len(pt) * 1000
         joblib.dump(final, f"artifacts/final/{name}.joblib")
-        return name, {"threshold": t, "valid": metrics(y_sel, pv, t),
-                            "test": metrics(y["test"], pt, t), "ms_per_1000_rows": round(ms, 2),
-                            "calibration": {"valid": calibration(y_sel, pv), "test": calibration(y["test"], pt)},
-                            "drift": drift(final), "fairness": fairness(y["test"], pt, t)}, None
+        return name, {"threshold": T, "test": metrics(y["test"], pt, T), "ms_per_1000_rows": round(ms, 2),
+                      "calibration": {"test": calibration(y["test"], pt)},
+                      "drift": drift(final), "fairness": fairness(y["test"], pt, T)}, None
     except Exception as exc:
         return name, None, (f"cannot be refit by the harness (sklearn.base.clone(model).fit(X, y)): "
                             f"{type(exc).__name__}: {exc}")[:400]
@@ -185,9 +155,8 @@ done = Parallel(n_jobs=max(1, min(int(os.environ["CPUS"]), len(paths))), prefer=
     delayed(evaluated)(p) for p in paths)
 candidates = {name: result for name, result, _ in done if result is not None}
 errors = {name: error for name, _, error in done if error is not None}
-selection = {"method": f"cv{folds_n}" if cv else "valid", "rows": len(y_sel), "ordered": ordered}
-print(json.dumps({"candidates": candidates, "errors": errors, "baseline": baseline, "selection": selection}))
-"""
+print(json.dumps({"candidates": candidates, "errors": errors, "baseline": baseline, "ordered": ordered}))
+""".replace("__PLAIN__", PLAIN_DTYPES)
 
 PREDICT = '''"""Serving code, the same for every version: the feature view's build(), then the model.
 
@@ -200,8 +169,9 @@ import json
 from pathlib import Path
 
 import joblib
+import numpy as np
 import pandas as pd
-
+__PLAIN__
 HOME = Path(__file__).resolve().parent.parent
 META = json.loads((HOME / "artifacts" / "model.json").read_text(encoding="utf-8"))
 MODEL = joblib.load(HOME / "artifacts" / "model.joblib")
@@ -214,7 +184,7 @@ _spec.loader.exec_module(_features)
 
 def predict(rows: list[dict]) -> list[dict]:
     raw = pd.DataFrame(rows)
-    scores = MODEL.predict_proba(_features.build(raw.copy())[META["features"]])[:, 1]
+    scores = MODEL.predict_proba(plain(_features.build(raw.copy())[META["features"]]))[:, 1]
     key = META.get("entity_key")
     ids = raw[key].tolist() if key and key in raw.columns else list(range(len(rows)))
     return [
@@ -225,7 +195,7 @@ def predict(rows: list[dict]) -> list[dict]:
         }
         for i, s in zip(ids, scores)
     ]
-'''
+'''.replace("__PLAIN__", PLAIN_DTYPES)
 
 SMOKE = """
 import json, math, os, sys
@@ -259,8 +229,6 @@ async def evaluate(
         "COST_FN": str(costs[0]),
         "COST_FP": str(costs[1]),
         "MODELS": json.dumps(plan["models"]),
-        "CV_BELOW": str(CV_BELOW),
-        "CV_FOLDS": str(settings.load().cv_folds),
         "CPUS": str(cpus()),
         "PROTECTED": json.dumps(list(settings.load().protected)),
     }
@@ -282,19 +250,14 @@ async def evaluate(
     for name, result_ in scored["candidates"].items():
         if best is None or catalog.better(
             metric,
-            result_["valid"].get(metric),
-            scored["candidates"][best]["valid"].get(metric),
+            result_["test"].get(metric),
+            scored["candidates"][best]["test"].get(metric),
         ):
             best = name
-    selection = scored["selection"]
     report = {
         "metric": metric,
-        "chosen_on": selection["method"],
-        "selection": selection,
-        "protocol": _protocol(selection),
-        "warnings": warnings(
-            scored["candidates"].get(best), metric, selection["ordered"]
-        )
+        "protocol": PROTOCOL,
+        "warnings": warnings(scored["candidates"].get(best), scored["ordered"])
         if best
         else [],
         "costs": {"false_negative": costs[0], "false_positive": costs[1]},
@@ -306,25 +269,13 @@ async def evaluate(
     return report, problems
 
 
-def _protocol(selection: dict[str, Any]) -> str:
-    if selection["method"] == "valid":
-        compare = "is compared on the comparison rows"
-    else:
-        compare = (
-            f"is compared by {selection['method'][2:]}-fold cross-validation over the "
-            f"{selection['rows']} learning and comparison rows (too few rows, in no "
-            "time order, to trust one split)"
-        )
-    return (
-        f"Each model {compare}, then relearns from all of them and is tested on "
-        "held-out rows it never saw."
-    )
+PROTOCOL = (
+    "Each model learns from the training rows and is scored once on test rows it never "
+    "saw. The best score on the plan's metric wins."
+)
 
 
 CALIBRATION_GAP = 0.2  # mean score off the outcome rate by more than 20% of it
-METRIC_GAP = (
-    0.05  # chosen metric worsens by this from valid to test (10% of it for cost)
-)
 DRIFT_SHIFT = 0.03  # a feature's newer values move the mean score this much
 MIN_GROUP_ROWS = 20  # smaller groups are too few to compare
 RECALL_GAP = 0.1  # eligible applicants approved: groups differ by more than this
@@ -342,7 +293,7 @@ def show(metric: str, value: float) -> str:
     )
 
 
-def warnings(scores: dict[str, Any], metric: str, ordered: bool = True) -> list[str]:
+def warnings(scores: dict[str, Any], ordered: bool = True) -> list[str]:
     """Plain-language checks on the best candidate, for the skeptic and the human.
 
     Drift is only a warning when the split follows time: on a random split the test
@@ -358,16 +309,6 @@ def warnings(scores: dict[str, Any], metric: str, ordered: bool = True) -> list[
             f"rate, but the real rate was {rate:.0%}. It {way}estimates the risk, so it "
             f"flags too {flags}."
         )
-    valid_m, test_m = scores["valid"].get(metric), scores["test"].get(metric)
-    if valid_m is not None and test_m is not None:
-        m = catalog.METRICS[metric]
-        drop = valid_m - test_m if m.higher_is_better else test_m - valid_m
-        if drop > (METRIC_GAP * abs(valid_m) * 2 if m.kind == "cost" else METRIC_GAP):
-            found.append(
-                f"{catalog.describe()[metric]['plain']} gets worse on the final-test "
-                f"{w['record']}s: {show(metric, valid_m)} when compared, "
-                f"{show(metric, test_m)} on the final test."
-            )
     found += fairness_flags(scores)
     moved = [
         d
@@ -398,8 +339,8 @@ def fairness_flags(scores: dict[str, Any]) -> list[str]:
         high = max(groups, key=lambda g: g["flag_rate"])
         if high["flag_rate"] and low["flag_rate"] / high["flag_rate"] < ratio_floor:
             found.append(
-                f"Fair lending, `{attribute}`: {low['group']} get a {w['positive']} "
-                f"{low['flag_rate']:.0%} of the time, {high['group']} {high['flag_rate']:.0%} "
+                f"Fair lending, `{attribute}`: {w['positive']} rate {low['flag_rate']:.0%} "
+                f"for {low['group']}, {high['flag_rate']:.0%} for {high['group']} "
                 f"(ratio {low['flag_rate'] / high['flag_rate']:.2f}, below {ratio_floor})."
             )
         rated = [g for g in groups if g["recall"] is not None]
@@ -408,9 +349,9 @@ def fairness_flags(scores: dict[str, Any]) -> list[str]:
             high = max(rated, key=lambda g: g["recall"])
             if high["recall"] - low["recall"] > RECALL_GAP:
                 found.append(
-                    f"Fair lending, `{attribute}`: of the {w['record']}s that deserved a "
-                    f"{w['positive']}, {low['group']} got one {low['recall']:.0%} of the "
-                    f"time, {high['group']} {high['recall']:.0%}."
+                    f"Fair lending, `{attribute}`: of the {w['record']}s that should get "
+                    f"a yes, {low['group']} got one {low['recall']:.0%} of the time, "
+                    f"{high['group']} {high['recall']:.0%}."
                 )
     return found
 
@@ -442,6 +383,10 @@ def bundle(
         "model": model,
         "threshold": evaluation["candidates"][model]["threshold"],
         "features": list(definition["features"]),
+        # the raw fields the features are built from: /predict names the rest as ignored
+        "sources": sorted(
+            {s for f in definition["features"].values() for s in f.get("source") or []}
+        ),
         "entity_key": definition.get("entity_key"),
         "outcome_column": definition.get("outcome_column"),
     }

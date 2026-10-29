@@ -67,26 +67,21 @@ export function MetricName({ id, short = false }: { id: string; short?: boolean 
   );
 }
 
-/** One sentence a manager can act on: how many it catches, how often it is right, what it costs. */
-export function Verdict({ test, baseCost }: { test?: Scores; baseCost?: number | null }) {
-  const { metrics, record, positive } = useWords();
+/** One sentence a manager can act on, in the decision table's words: how often it is
+ *  right and what its mistakes cost. */
+export function Verdict({ test }: { test?: Scores }) {
+  const { metrics, record } = useWords();
   if (!test) return null;
   return (
     <>
-      {test.recall != null && (
+      {test.accuracy != null && (
         <>
-          Catches <b>{pct(test.recall)}</b> of {positive}s.{" "}
-        </>
-      )}
-      {test.precision != null && (
-        <>
-          When it flags a {record}, it is right <b>{pct(test.precision)}</b> of the time.{" "}
+          Right on <b>{pct(test.accuracy)}</b> of {record}s.{" "}
         </>
       )}
       {test.cost_per_1000 != null && (
         <>
-          Loss: <b>{fmt(metrics, "cost_per_1000", test.cost_per_1000)}</b> per 1,000 {record}s
-          {baseCost ? ` (doing nothing: ${fmt(metrics, "cost_per_1000", baseCost)})` : ""}.
+          Loss: <b>{fmt(metrics, "cost_per_1000", test.cost_per_1000)}</b> per 1,000 {record}s.
         </>
       )}
     </>

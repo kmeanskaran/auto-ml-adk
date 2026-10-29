@@ -1,9 +1,8 @@
 """Which Gemini model each agent thinks with, and how hard.
 
-config/config.yml (models) sets the defaults: `team` for the analyst's first look, the
-engineer and the skeptic, and `analyst` for the chat analyst, each with a thinking level.
-The console's model menu can switch the team's model during a run: every agent is
-built once, and the choice is applied to each model request (a before_model_callback),
+config/config.yml (models) sets the default, one model and thinking level for every
+agent: the pipeline's team and the chat analyst alike. The console's model menu can
+switch it at any time: every agent is built once, and the choice is applied to each model request (a before_model_callback),
 so it takes effect from the next call. That choice is saved in .adk/model.json, which
 survives restarts and "Clear runs". All this applies when the agents run on Gemini; with
 ML_MODEL set to another LiteLLM model (e.g. Ollama) requests are left as they are.
@@ -70,20 +69,10 @@ def choose(model: str, thinking: str) -> dict[str, str]:
     return current()
 
 
-def analyst() -> dict[str, str]:
-    """The chat analyst's model and thinking level (config models.analyst)."""
-    config = settings.load()
-    thinking = config.analyst_thinking
-    return {
-        "model": config.analyst_model,
-        "thinking": thinking if thinking in THINKING else "low",
-    }
-
-
 def view() -> dict[str, Any]:
     return {
         **current(),
-        "analyst": analyst(),
+        "analyst": current(),  # one setting: the chat analyst uses the team's model
         "available": on_gemini(),
         "base": base(),
         "models": [{"key": k, "label": v} for k, v in MODELS.items()],
@@ -92,12 +81,11 @@ def view() -> dict[str, Any]:
 
 
 def apply(callback_context: CallbackContext, llm_request: LlmRequest) -> None:
-    """before_model_callback: send this request to the agent's model and thinking
-    level, the chat analyst's from config, the team's from the console or config."""
+    """before_model_callback: send every agent's request to the one model and thinking
+    level, the console's choice or config's."""
     if not on_gemini():
         return None
-    agent = getattr(callback_context, "agent_name", "")
-    choice = analyst() if agent == "analyst" else current()
+    choice = current()
     llm_request.model = choice["model"]
     config = llm_request.config or types.GenerateContentConfig()
     config.thinking_config = types.ThinkingConfig(

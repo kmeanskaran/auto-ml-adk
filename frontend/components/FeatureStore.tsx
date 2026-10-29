@@ -7,7 +7,7 @@ import { useState } from "react";
 import { Info, num, useWords } from "@/lib/words";
 import type { FeatureVersion, FeatureView } from "@/lib/types";
 
-const SPLIT: Record<string, string> = { train: "Learn from", valid: "Compare on", test: "Final test" };
+const SPLIT: Record<string, string> = { train: "Learn from", test: "Test on" };
 
 function Signal({ auc }: { auc?: number | null }) {
   if (auc === null || auc === undefined) return <span className="muted">—</span>;
@@ -29,7 +29,7 @@ function Version({ v }: { v: FeatureVersion }) {
   return (
     <>
       <div className="kpis">
-        {["train", "valid", "test"].map((s) =>
+        {["train", "test"].map((s) =>
           v.tables[s] ? (
             <div className="kpi" key={s}>
               <b>{num(v.tables[s].rows)}</b>

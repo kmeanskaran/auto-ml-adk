@@ -457,10 +457,10 @@ def _leaderboard(evaluation: dict | None) -> dict | None:
         for name, scores in evaluation["candidates"].items()
     ]
     sign = 1 if catalog.METRICS[metric].higher_is_better else -1
-    rows.sort(
+    rows.sort(  # best first on test, the way the harness picks
         key=lambda r: (
-            r["valid"].get(metric) is not None,
-            sign * (r["valid"].get(metric) or 0),
+            r["test"].get(metric) is not None,
+            sign * (r["test"].get(metric) or 0),
         ),
         reverse=True,
     )
@@ -471,7 +471,6 @@ def _leaderboard(evaluation: dict | None) -> dict | None:
         "baseline": evaluation["baseline"],
         "warnings": evaluation.get("warnings", []),
         "protocol": evaluation.get("protocol", ""),
-        "chosen_on": evaluation.get("chosen_on", "valid"),
         "rows": rows,
         "metrics": [{"key": k, "label": m.label} for k, m in catalog.METRICS.items()],
     }

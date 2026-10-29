@@ -10,8 +10,6 @@ import type { Answer, Config, Leaderboard, Review, Stage } from "@/lib/types";
 
 export type Act = (answer: Answer) => Promise<void>;
 
-const WINNER = "Scored best on the comparison data, before the final test. The final test can still disagree.";
-
 function Skeptic({ review, subject }: { review?: Review | null; subject: string }) {
   if (!review?.verdict) return <div className="muted small">The skeptic did not send a review.</div>;
   const good = review.verdict === "pass";
@@ -90,7 +88,7 @@ export function FeaturesReview({ stage, act }: { stage: Stage; act: Act }) {
           </button>
         )}
         <button className={changes === 0 ? "primary" : ""} disabled={problems.length > 0} onClick={() => act(answer("continue"))}>
-          Continue as is
+          Approve features
         </button>
         <span className="spacer" />
         <button className="link" onClick={discard(act)}>
@@ -121,8 +119,8 @@ export function PlanReview({ stage, config, store, act }: { stage: Stage; config
         <dd>{store ? `${store.view} ${store.version} (approved)` : config.feature_view}</dd>
         <dt>Cut-off</dt>
         <dd>
-          set automatically to keep the loss lowest
-          <Info text={`A ${record} is flagged when its score reaches this. It is set to keep the loss lowest.`} />
+          set by the mistake costs
+          <Info text={`A ${record} is flagged when its score reaches this. It comes from the mistake costs, not from the data.`} />
         </dd>
         {proposal.reason && (
           <>
@@ -165,12 +163,12 @@ export function PlanReview({ stage, config, store, act }: { stage: Stage; config
   );
 }
 
-/** The decision table: what a business owner needs, on the final test. ★ marks the plan's metric. */
+/** The decision table: each model's score on the plan's metric (★, the business one by
+ *  default) on the test set, with a bar so the gaps show at a glance. */
 function Candidates({ lb, pick, setPick }: { lb: Leaderboard; pick: string; setPick: (m: string) => void }) {
   const { metrics } = useWords();
-  const cols = ["recall", "precision", "cost_per_1000"];
-  if (!cols.includes(lb.metric)) cols.push(lb.metric);
-  const never = (k: string) => (k === "precision" ? "—" : fmt(metrics, k, lb.baseline.test[k])); // doing nothing never flags
+  const values = lb.rows.map((r) => r.test[lb.metric] ?? 0);
+  const top = Math.max(...values, 1e-9);
   return (
     <div className="scroll">
       <table className="grid">
@@ -178,12 +176,9 @@ function Candidates({ lb, pick, setPick }: { lb: Leaderboard; pick: string; setP
           <tr>
             <th />
             <th>Model</th>
-            {cols.map((k) => (
-              <th className="num" key={k}>
-                <MetricName id={k} short />
-                {k === lb.metric ? " ★" : ""}
-              </th>
-            ))}
+            <th className="num">
+              <MetricName id={lb.metric} short /> ★
+            </th>
           </tr>
         </thead>
         <tbody>
@@ -198,26 +193,19 @@ function Candidates({ lb, pick, setPick }: { lb: Leaderboard; pick: string; setP
                   <>
                     {" "}
                     <span className="pill good">winner</span>
-                    <Info text={WINNER} />
                   </>
                 )}
               </td>
-              {cols.map((k) => (
-                <td className="num" key={k}>
-                  {fmt(metrics, k, r.test[k])}
-                </td>
-              ))}
+              <td className="num">
+                <span className="signal wide">
+                  <span className="bar">
+                    <i style={{ width: `${Math.round((100 * (r.test[lb.metric] ?? 0)) / top)}%` }} />
+                  </span>
+                  {fmt(metrics, lb.metric, r.test[lb.metric])}
+                </span>
+              </td>
             </tr>
           ))}
-          <tr className="muted">
-            <td />
-            <td>Doing nothing</td>
-            {cols.map((k) => (
-              <td className="num" key={k}>
-                {never(k)}
-              </td>
-            ))}
-          </tr>
         </tbody>
       </table>
     </div>
@@ -275,7 +263,7 @@ export function PromoteReview({ stage, act }: { stage: Stage; act: Act }) {
           <div className="small muted">Candidate</div>
           <div className="name">{chosen.label}</div>
           <div className="small">
-            <Verdict test={chosen.test} baseCost={lb.baseline.test.cost_per_1000} />
+            <Verdict test={chosen.test} />
           </div>
         </div>
         <div className="pick-verdict quiet">
@@ -286,7 +274,7 @@ export function PromoteReview({ stage, act }: { stage: Stage; act: Act }) {
                 {live.version} · {live.model}
               </div>
               <div className="small">
-                <Verdict test={live.test} baseCost={live.baseline_test?.cost_per_1000} />
+                <Verdict test={live.test} />
               </div>
             </>
           ) : (

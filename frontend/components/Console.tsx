@@ -134,8 +134,8 @@ export default function Console() {
         </div>
         {m.available ? (
           <div className="modelpick" title="The Gemini model the team (analyst's first look, engineer, skeptic) thinks with, from its next call on. Defaults: config/config.yml">
-            <span className="small muted">Team</span>
-            <select aria-label="Team model" value={m.model} onChange={(e) => run(() => api.setModel(e.target.value, m.thinking))}>
+            <span className="small muted">Model</span>
+            <select aria-label="Model for every agent" value={m.model} onChange={(e) => run(() => api.setModel(e.target.value, m.thinking))}>
               {m.models.map((o) => (
                 <option key={o.key} value={o.key}>
                   {o.label}

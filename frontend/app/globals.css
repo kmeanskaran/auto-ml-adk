@@ -75,6 +75,7 @@ button.tile:hover { border-color: var(--accent); }
 .signal { display: inline-flex; align-items: center; gap: 6px; font-variant-numeric: tabular-nums; }
 .signal .bar { width: 46px; height: 5px; border-radius: 3px; background: var(--soft); overflow: hidden; }
 .signal .bar i { display: block; height: 100%; background: var(--accent); }
+.signal.wide .bar { width: 160px; height: 8px; }
 .card-head select { width: auto; padding: 5px 9px; }
 table.grid tr.picked td { background: color-mix(in srgb, var(--accent) 8%, transparent); }
 table.grid tr.clickable { cursor: pointer; }

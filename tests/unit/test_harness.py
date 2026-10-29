@@ -227,8 +227,8 @@ def features_stage(source=ROW_WISE, report=None):
     root = project.current()
     frame = raw()
     for name, part in zip(
-        ("train", "valid", "test"),
-        (frame[:200], frame[200:300], frame[300:]),
+        ("train", "test"),
+        (frame[:300], frame[300:]),
         strict=True,
     ):
         part.to_parquet(root / "artifacts" / f"{name}.parquet")
@@ -298,22 +298,23 @@ def test_harness_evaluates_every_candidate_and_serving_bundle_works():
     report = project.read_json(root / "reports" / "evaluation.json")
     scores = report["candidates"]["logistic_regression"]
     assert report["best"] == "logistic_regression" and report["metric"] == "pr_auc"
-    assert report["chosen_on"] == "valid"  # a time-ordered split: compared on valid
     assert set(scores["test"]) == set(contracts.catalog.METRICS)
-    assert scores["valid"]["roc_auc"] > report["baseline"]["valid"]["roc_auc"]
+    assert scores["test"]["roc_auc"] > report["baseline"]["test"]["roc_auc"]
+    assert scores["threshold"] == round(
+        2 / (2 + 1), 4
+    )  # set by the costs, not the data
 
 
-def test_harness_refits_so_training_on_valid_cannot_inflate_validation():
+def test_harness_refits_so_training_on_test_cannot_inflate_the_score():
     root, _ = trained_run()
     path = feature_store.path("view", "v1") / "offline"
     cols = ["x", "x_sq", "is_a"]
     train = pd.read_parquet(path / "train.parquet")
-    valid = pd.read_parquet(path / "valid.parquet")
-    both = pd.concat([train, valid])
-    # the engineer hands over a model that has already seen the validation rows
+    test = pd.read_parquet(path / "test.parquet")
+    # the engineer hands over a model that has already seen the test rows
     joblib.dump(
         make_pipeline(StandardScaler(), LogisticRegression()).fit(
-            both[cols], both["y"]
+            pd.concat([train, test])[cols], pd.concat([train, test])["y"]
         ),
         root / "artifacts" / "models" / "logistic_regression.joblib",
     )
@@ -326,11 +327,44 @@ def test_harness_refits_so_training_on_valid_cannot_inflate_validation():
     )
     from sklearn.metrics import roc_auc_score
 
-    expected = roc_auc_score(valid["y"], honest.predict_proba(valid[cols])[:, 1])
-    assert scores["valid"]["roc_auc"] == round(expected, 4)
-    assert set(scores["calibration"]) == {"valid", "test"}
+    expected = roc_auc_score(test["y"], honest.predict_proba(test[cols])[:, 1])
+    assert scores["test"]["roc_auc"] == round(expected, 4)
+    assert set(scores["calibration"]) == {"test"}
     assert scores["drift"][0]["feature"] in cols
     assert (root / "artifacts" / "final" / "logistic_regression.joblib").is_file()
+
+
+def test_the_loss_weighs_each_mistake_by_how_sure_the_model_was():
+    root, _ = trained_run()
+    assert asyncio.run(contracts.problems(root, "model")) == []
+    report = project.read_json(root / "reports" / "evaluation.json")
+    y = pd.read_parquet(feature_store.path("view", "v1") / "offline" / "test.parquet")[
+        "y"
+    ]
+    train = pd.read_parquet(
+        feature_store.path("view", "v1") / "offline" / "train.parquet"
+    )
+    p = train["y"].mean()  # no model: every record gets the training rate
+    expected = 1000 * (1 * (y == 1).sum() * (1 - p) + 2 * (y == 0).sum() * p) / len(y)
+    assert report["baseline"]["test"]["cost_per_1000"] == round(expected, 4)
+
+
+def test_nullable_feature_types_are_stored_plain_so_sklearn_can_impute():
+    # pandas' string / Int64 types mark gaps with pd.NA, which sklearn cannot impute
+    source = (
+        "import pandas as pd\n"
+        "def build(raw):\n"
+        "    kind = raw['kind'].astype('string').where(raw['x'] < 1, pd.NA)\n"
+        "    return pd.DataFrame({'x': raw['x'], 'x_sq': (raw['x'] > 0).astype('Int64'), 'is_a': kind})\n"
+    )
+    root = features_stage(source)
+    assert asyncio.run(contracts.problems(root, "features")) == []
+    table = pd.read_parquet(root / "features" / "train.parquet")
+    assert table["x_sq"].dtype == "float64" and table["is_a"].isna().any()
+    assert not table["is_a"].astype(object).map(lambda v: v is pd.NA).any()
+    from sklearn.impute import SimpleImputer
+
+    SimpleImputer(strategy="most_frequent").fit(table[["is_a"]])  # pd.NA would fail
 
 
 def test_the_split_must_say_whether_it_follows_time():
@@ -340,7 +374,7 @@ def test_the_split_must_say_whether_it_follows_time():
     assert any("split.ordered_by is required" in i for i in issues)
 
 
-def test_few_unordered_rows_are_compared_by_cross_validation():
+def test_unordered_rows_get_no_drift_report():
     unordered = {
         **FEATURES_REPORT,
         "split": {**FEATURES_REPORT["split"], "ordered_by": None},
@@ -348,8 +382,6 @@ def test_few_unordered_rows_are_compared_by_cross_validation():
     root, _ = trained_run(unordered)
     assert asyncio.run(contracts.problems(root, "model")) == []
     report = project.read_json(root / "reports" / "evaluation.json")
-    assert report["chosen_on"] == "cv3" and report["selection"]["rows"] == 300
-    assert "3-fold cross-validation over the 300" in report["protocol"]
     assert (
         report["candidates"]["logistic_regression"]["drift"] == []
     )  # no time order: noise
@@ -357,13 +389,12 @@ def test_few_unordered_rows_are_compared_by_cross_validation():
 
 def test_drift_is_only_a_warning_when_the_split_follows_time():
     scores = {
-        "valid": {"roc_auc": 0.8},
         "test": {"roc_auc": 0.8},
         "calibration": {"test": {"mean_score": 0.3, "outcome_rate": 0.3}},
         "drift": [{"feature": "income", "score_shift": 0.2}],
     }
-    assert evaluation.warnings(scores, "roc_auc", ordered=False) == []
-    assert "income" in evaluation.warnings(scores, "roc_auc", ordered=True)[0]
+    assert evaluation.warnings(scores, ordered=False) == []
+    assert "income" in evaluation.warnings(scores, ordered=True)[0]
 
 
 def test_the_analyst_hands_over_the_charts_it_chose():
@@ -390,19 +421,17 @@ def test_the_analyst_hands_over_the_charts_it_chose():
 
 def test_warnings_speak_plainly_about_calibration_gaps_and_drift():
     scores = {
-        "valid": {"roc_auc": 0.86},
         "test": {"roc_auc": 0.80},
         "calibration": {"test": {"mean_score": 0.22, "outcome_rate": 0.37}},
         "drift": [{"feature": "income", "score_shift": 0.075}],
     }
-    found = evaluation.warnings(scores, "roc_auc")
+    found = evaluation.warnings(scores)
     assert "predicts a 22% approval rate, but the real rate was 37%" in found[0]
     assert "underestimates the risk, so it flags too few" in found[0]
-    assert "0.860 when compared, 0.800 on the final test" in found[1]
-    assert found[2].endswith("hold up: income.")
+    assert found[1].endswith("hold up: income.")
     fine = {**scores, "test": {"roc_auc": 0.85}, "drift": []}
     fine["calibration"] = {"test": {"mean_score": 0.36, "outcome_rate": 0.37}}
-    assert evaluation.warnings(fine, "roc_auc") == []
+    assert evaluation.warnings(fine) == []
 
 
 def test_registry_versions_promotes_idempotently_and_rolls_back():
@@ -423,8 +452,9 @@ def test_registry_versions_promotes_idempotently_and_rolls_back():
     registry.promote("v1")
     registry.promote("v1")  # a resumed workflow promoting again changes nothing
     assert [e["event"] for e in registry.audit()] == ["promoted", "register"]
-    rows = raw(3, seed=5).drop(columns=["y"]).to_dict("records")
+    rows = raw(3, seed=5).drop(columns=["y"]).assign(Gender="F").to_dict("records")
     served = registry.predict(rows)
+    assert served["ignored"] == ["Gender"]  # no feature is built from it
     assert served["version"] == "v1" and [p["id"] for p in served["predictions"]] == [
         "r5-0",
         "r5-1",
@@ -1036,7 +1066,7 @@ def test_an_unfair_model_never_goes_live_without_a_human(monkeypatch):
     )
     session = Session(Scripted(model="scripted", verdicts=["pass", "pass"]))
     pause = asyncio.run(session.start())
-    assert pause[2]["stage"] == "promote" and "Fair-lending check" in pause[2]["why"]
+    assert pause[2]["stage"] == "promote" and "Fair-lending warning" in pause[2]["why"]
     assert promoted == []
 
 
@@ -1480,10 +1510,10 @@ def test_the_chosen_model_and_thinking_level_go_into_every_request(
     models.apply(team, request)
     assert request.model == "gemini-3.8-flash"
     assert request.config.thinking_config.thinking_level == genai.ThinkingLevel.HIGH
-    answer = LlmRequest(model="gemini-3.7-flash")  # the chat analyst keeps its own
+    answer = LlmRequest(model="gemini-3.7-flash")  # one setting: the chat analyst too
     models.apply(chat, answer)
-    assert answer.model == "gemini-3.5-flash"
-    assert answer.config.thinking_config.thinking_level == genai.ThinkingLevel.LOW
+    assert answer.model == "gemini-3.8-flash"
+    assert answer.config.thinking_config.thinking_level == genai.ThinkingLevel.HIGH
     with pytest.raises(ValueError):
         models.choose("gemini-1.0-pro", "low")
     monkeypatch.setenv(
@@ -1500,12 +1530,12 @@ def test_the_chosen_model_and_thinking_level_go_into_every_request(
 def test_limits_come_from_the_config(monkeypatch):
     config = settings.load()
     assert (config.tool_budget, config.fix_rounds, config.compact_above_chars) == (
-        20,
+        10,
         1,
         50_000,
     )
-    assert tools.budgets() == (13, 20)
-    assert tools.budgets("skeptic_features") == (6, 10)
+    assert tools.budgets() == (6, 10)
+    assert tools.budgets("skeptic_features") == (3, 5)
     monkeypatch.setattr(
         settings, "load", lambda: dataclasses.replace(config, tool_budget=12)
     )
@@ -1529,6 +1559,15 @@ def test_a_successful_submit_ends_the_turn_without_another_model_call():
             ]
         )
 
-    done = tools.handed_over(None, request("ok"))
+    done = tools.handed_over(ctx("engineer_features"), request("ok"))
     assert done.content.parts[0].text == tools.HANDED_OVER
-    assert tools.handed_over(None, request("error")) is None  # it must fix and resubmit
+    assert (
+        tools.handed_over(ctx("engineer_features"), request("error")) is None
+    )  # it must fix and resubmit
+    # a turn far past its budget ends instead of looping on refused calls
+    turn = ctx("engineer_model")
+    tools.start_turn(turn)
+    tools._turn(turn).calls = tools.budgets("engineer_model")[1] + tools.GRACE + 1
+    stopped = tools.handed_over(turn, request("error"))
+    assert stopped.content.parts[0].text == tools.OUT_OF_CALLS
+    tools.end_turn(turn)

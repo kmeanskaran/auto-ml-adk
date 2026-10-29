@@ -31,13 +31,10 @@ class Settings:
     min_group_ratio: float = 0.8  # lowest group's approval rate / highest, at least
     team_model: str = "gemini-3.7-flash"  # models.team
     team_thinking: str = "low"
-    analyst_model: str = "gemini-3.5-flash"  # models.analyst: the chat analyst
-    analyst_thinking: str = "low"
     context_cache: bool = True  # models.context_cache: cache each role's prompt head
     tool_budget: int = 20  # limits.tool_budget: tool calls per agent turn
     skeptic_tool_budget: int = 10  # limits.skeptic_tool_budget: the skeptic's
     fix_rounds: int = 1  # limits.fix_rounds
-    cv_folds: int = 3  # limits.cv_folds: folds when the harness compares by CV
     compact_above_chars: int = 50_000  # limits.compact_above_chars
     script_seconds: int = 300  # limits.script_seconds: a script is stopped after this
 
@@ -97,14 +94,11 @@ def load() -> Settings:
         min_group_ratio=float(fairness.get("min_ratio", 0.8)),
         team_model=str(llms.get("team") or Settings.team_model),
         team_thinking=str(llms.get("team_thinking") or Settings.team_thinking),
-        analyst_model=str(llms.get("analyst") or Settings.analyst_model),
-        analyst_thinking=str(llms.get("analyst_thinking") or Settings.analyst_thinking),
         context_cache=bool(llms.get("context_cache", True)),
         tool_budget=max(5, int(limits.get("tool_budget", Settings.tool_budget))),
         skeptic_tool_budget=max(
             5, int(limits.get("skeptic_tool_budget", Settings.skeptic_tool_budget))
         ),
-        cv_folds=max(2, int(limits.get("cv_folds", Settings.cv_folds))),
         fix_rounds=max(0, int(limits.get("fix_rounds", Settings.fix_rounds))),
         compact_above_chars=max(
             10_000, int(limits.get("compact_above_chars", Settings.compact_above_chars))

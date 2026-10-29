@@ -159,3 +159,22 @@ def append_jsonl(path: Path, record: dict[str, Any]) -> None:
         handle.write(
             json.dumps({"at": time.strftime("%Y-%m-%dT%H:%M:%S"), **record}) + "\n"
         )
+
+
+# Shared by the harness's scripts and every serving bundle: pandas' nullable types
+# (string, Int64, boolean) mark gaps with pd.NA, which sklearn cannot impute, so the
+# feature tables and build()'s output are given plain dtypes with NaN gaps.
+PLAIN_DTYPES = """
+def plain(df):
+    for c in df.columns:
+        dt = df[c].dtype
+        if not isinstance(dt, pd.api.extensions.ExtensionDtype) or isinstance(
+            dt, (pd.CategoricalDtype, pd.DatetimeTZDtype)
+        ):
+            continue
+        if pd.api.types.is_numeric_dtype(dt) or pd.api.types.is_bool_dtype(dt):
+            df[c] = df[c].astype("float64")
+        else:
+            df[c] = df[c].astype(object).where(df[c].notna(), np.nan)
+    return df
+"""

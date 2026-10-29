@@ -62,8 +62,7 @@ export function Comparison({ lb }: { lb: Leaderboard }) {
         title: `${metrics[lb.metric]?.plain || lb.metric} by model`,
         categories: lb.rows.map((r) => r.label),
         series: [
-          { name: "compared on", values: lb.rows.map((r) => chartValue(metrics, lb.metric, r.valid[lb.metric])) },
-          { name: "final test", values: lb.rows.map((r) => chartValue(metrics, lb.metric, r.test[lb.metric])) },
+          { name: "test", values: lb.rows.map((r) => chartValue(metrics, lb.metric, r.test[lb.metric])) },
         ],
       }}
     />

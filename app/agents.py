@@ -114,19 +114,19 @@ PROFILE = (
     + KIT_GUIDE
     + """
 # Your role: analyst, first look at the data
-The harness has already measured the dataset: reports/profile.json holds every column's
-type, missing values, distinct values and how well it ranks the outcome on its own
-(signal_auc, 0.5 = none, 1.0 = perfect); your request holds it at a glance.
+A basic understanding of the data, nothing more. The harness has already measured it:
+reports/profile.json holds every column's type, missing values, distinct values and how
+well it ranks the outcome on its own (signal_auc, 0.5 = none, 1.0 = perfect); your
+request holds it at a glance.
 
-One pass: write and run ONE script (checks/analyst_profile.py) that measures what
-matters for modeling: how the outcome rate moves across the columns that carry
-signal, where values are missing and whether missingness says something, what is
-skewed or extreme; it also writes up to three charts (charts/<name>.json, format as in
-submit_summary's charts) for the findings a chart shows better than a sentence.
-
-Then call submit_summary: one headline sentence (what the data is, rows, outcome rate),
-up to five one-line findings a modeler must know first, each with its number, and up
-to three of your charts. You describe the data; you do not build features or models.
+Two steps:
+1. write_and_run ONE short script (checks/analyst_profile.py) that prints the basics:
+   rows and columns, the outcome rate, the columns with missing values, and the outcome
+   rate across the two or three columns with the most signal. It may write one chart
+   (charts/<name>.json, format as in submit_summary's charts).
+2. submit_summary: one headline sentence (what the data is, rows, outcome rate) and up
+   to three one-line findings in plain words, each with its number; at most one chart.
+You describe the data; you do not build features or models.
 """
 )
 
@@ -162,16 +162,18 @@ Write src/data.py and src/features.py and run them so that you hand over:
 
 Decide from the stats: how missing values are written, which rows belong in the
 population, what to do with repeated rows, which columns are known at the prediction
-moment, and a split that imitates how the model will meet new data, sized so each
-part can still be measured; record in split.ordered_by whether it follows time.
+moment, and a train/test split (two parts, no validation set; about 80/20) that
+imitates how the model will meet new data; record in split.ordered_by whether it
+follows time.
 Anything learned from data (fill values, encodings, caps on outliers) belongs in the
 model pipeline, not in build(). Keep the columns with signal and add a few simple
 features the stats point to (ratios, sums, flags), each with a one-line reason. Every
 feature must be available at the prediction moment. Write reports/features.json from
 src/data.py (write_file cannot write reports/).
 
-Then call propose_plan (three or four models worth comparing on these features and the
-metric that fits the business settings, with a one-line reason) before check_stage.
+Then call propose_plan (three fast models worth comparing on these features, e.g.
+logistic_regression, random_forest and xgboost, and the metric that fits the business
+settings, with a one-line reason) before check_stage.
 """
 )
 
@@ -179,7 +181,7 @@ MODEL_STAGE = (
     """
 ## Stage: model
 The features are approved and frozen in the feature store; the folder named by the
-FEATURE_DIR environment variable holds definition.json and offline/{train,valid,test}.parquet.
+FEATURE_DIR environment variable holds definition.json and offline/{train,test}.parquet.
 reports/plan.json holds the approved plan: the models to train and the metric.
 Write src/train.py and run it so that you hand over:
 """
@@ -214,9 +216,9 @@ ONE script (checks/skeptic_features.py), and check only:
   through a close stand-in, without a reason a lender could defend.
 
 Model stage. reports/evaluation.json in your request has every candidate's metrics on
-valid and test, the baseline, calibration, fairness and "warnings", computed by the
+test, the baseline, calibration, fairness and "warnings", computed by the
 harness. Read the numbers; no script is needed. Check only:
-- results too good to be plausible, or a large gap between valid and test;
+- results too good to be plausible;
 - a best candidate no better than the baseline;
 - a fair-lending warning (a human decides those before promotion).
 Name the candidate you would promote in a finding.
@@ -280,16 +282,10 @@ the text points at it. It does not for a single number or a yes/no. When it does
 write it with chart() in the same script and call show_chart with the path it returns;
 a chart your script writes during the answer is shown with it.
 
-A question (a number, a comparison, a distribution):
-- at most five short lines, then at most one small markdown table (8 rows);
+Keep every answer short and plain, for someone new to data, even when asked for a
+report or an overview:
+- at most three short lines, then at most one small markdown table (8 rows);
 - at most one chart.
-
-A report (the human asks for a report, an analysis or an overview):
-- short sections, each starting with a "### " heading, each with one to three lines
-  of findings and the numbers behind them; at most three tables;
-- one to three charts, one per show_chart call, the most telling first;
-- end with a "### What this means" section: two or three plain lines, and one
-  question worth asking next.
 """
 )
 

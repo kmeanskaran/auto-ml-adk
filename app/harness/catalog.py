@@ -22,13 +22,14 @@ class Metric:
 
 METRICS: dict[str, Metric] = {
     "cost_per_1000": Metric(
-        "Cost per 1,000",
+        "Expected cost per 1,000",
         False,
-        True,
+        False,
         "cost",
         "Loss per 1,000 {record}s",
-        "What its mistakes cost per 1,000 {record}s: each missed {positive} costs "
-        "{missed}, each {false_alarm_word} costs {false_alarm}. Lower is better.",
+        "What its mistakes cost per 1,000 {record}s, weighed by how sure it was: a "
+        "missed {positive} costs {missed}, a {false_alarm_word} costs {false_alarm}. "
+        "Lower is better.",
     ),
     "recall": Metric(
         "Recall",

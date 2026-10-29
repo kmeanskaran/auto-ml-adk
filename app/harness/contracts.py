@@ -33,7 +33,7 @@ FEATURES_FORMAT = """reports/features.json:
       "description": "<one line>",
       "known_at_prediction": "yes" | "unclear"}}
 }
-plus artifacts/train.parquet, artifacts/valid.parquet, artifacts/test.parquet written by
+plus artifacts/train.parquet and artifacts/test.parquet written by
 src/data.py (raw-shaped rows, with the outcome column), and src/features.py defining
 build(raw: pandas.DataFrame) -> pandas.DataFrame: row-wise and stateless (nothing fitted
 on data), never reading the outcome, returning exactly the declared features. It runs on
@@ -45,12 +45,16 @@ MODEL_FORMAT = """For every model key in reports/plan.json, artifacts/models/<ke
 object with predict_proba(X), where X is a DataFrame of the feature view's feature
 columns (FEATURE_DIR/definition.json "features", in that order). FEATURE_DIR is a frozen
 feature store version: read it, never write into it. Anything fitted on data
-(imputers, encoders, scalers) lives inside it, e.g. a sklearn Pipeline. Train on
-FEATURE_DIR/offline/train.parquet; valid.parquet is for tuning. The harness refits a
-fresh copy with sklearn.base.clone(model).fit(X, y), once on train and once on
-train+valid, so the model must fit from X and y alone (no eval_set, no early stopping
-that needs one). Do not compute final metrics or thresholds: the harness picks the
-winner and threshold on valid, scores test, and serves the train+valid refit."""
+(imputers, encoders, scalers) lives inside it, e.g. a sklearn Pipeline. No class
+weights or resampling: the harness's cut-off comes from the mistake costs and needs
+the model's scores to be honest probabilities. Build it only from library parts
+(sklearn, xgboost, lightgbm): a class or function defined in train.py cannot be
+loaded by the harness. Train on
+FEATURE_DIR/offline/train.parquet only; never read test.parquet. The harness refits a
+fresh copy on train with sklearn.base.clone(model).fit(X, y), so the model must fit
+from X and y alone (no eval_set, no early stopping that needs one). Do not compute
+final metrics or thresholds: the harness scores every model on test, picks the
+winner and serves that fit."""
 
 FORMATS = {"profile": "", "features": FEATURES_FORMAT, "model": MODEL_FORMAT}
 

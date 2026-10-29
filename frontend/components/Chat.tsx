@@ -10,11 +10,10 @@ import { More } from "./Parts";
 import type { ChatMessage, View } from "@/lib/types";
 
 const STARTERS = [
-  "Which columns matter most for approval, and is each effect real?",
-  "Is production traffic different from the data we trained on?",
-  "What does the live model rely on?",
-  "Do approval rates differ by gender or marriage, in the data and in the model?",
-  "A report on income and approval",
+  "How many applications are approved?",
+  "Which columns have missing values?",
+  "How does credit history affect approval?",
+  "What does applicant income look like?",
 ];
 
 /** A long report keeps its opening (the lead, or its first section) and first chart in
@@ -77,14 +76,14 @@ export default function Chat({ chat, analyst, ask }: Props) {
     <section className="card chat">
       <div className="card-head">
         <h2>Ask the analyst</h2>
-        <span className="small muted" title="Set in config/config.yml (models.analyst)">
+        <span className="small muted" title="The model menu at the top sets it for every agent">
           {analyst ? `${label(analyst.model)} · ${analyst.thinking} thinking` : "stats, charts, the live model"}
         </span>
       </div>
       <div className="msgs" ref={box}>
         {chat.messages.length === 0 && (
           <div className="starters">
-            <div className="muted small">Ask about the data, the features, the models or production traffic. Try:</div>
+            <div className="muted small">Ask a question about the data. Try:</div>
             {STARTERS.map((q) => (
               <button key={q} className="chip" disabled={busy} onClick={() => submit(q)}>
                 {q}

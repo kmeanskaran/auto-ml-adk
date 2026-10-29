@@ -70,7 +70,7 @@ def traffic() -> pd.DataFrame:
 
 
 def features(version: str | None = None) -> tuple[pd.DataFrame, dict]:
-    """A feature view version's tables (train, valid, test stacked, with a `split`
+    """A feature view version's tables (train and test stacked, with a `split`
     column) and its definition. The newest version unless one is named."""
     root = os.environ.get("FEATURE_VIEW_DIR", "")
     found = sorted(
@@ -85,7 +85,7 @@ def features(version: str | None = None) -> tuple[pd.DataFrame, dict]:
     definition = json.load(open(os.path.join(folder, "definition.json")))
     parts = [
         pd.read_parquet(os.path.join(folder, "offline", f"{s}.parquet")).assign(split=s)
-        for s in ("train", "valid", "test")
+        for s in ("train", "test")
     ]
     return pd.concat(parts, ignore_index=True), definition
 

@@ -4,7 +4,7 @@ A feature view version holds three things that must never drift apart:
 
   definition.json  what each feature means, where it comes from, its statistics
   features.py      the transform, build(raw) -> features, row-wise and stateless
-  offline/         the materialized train / valid / test tables training reads
+  offline/         the materialized train / test tables training reads
 
 Training reads offline/ through FEATURE_DIR. Serving imports the same
 features.py, so a model sees the same transform online as offline. Versions are
@@ -27,10 +27,10 @@ from typing import Any
 
 from app.harness import project
 from app.harness.environment import ProjectEnvironment
-from app.harness.project import APP_ROOT, read_json, write_json
+from app.harness.project import APP_ROOT, PLAIN_DTYPES, read_json, write_json
 
 STORE = Path(os.environ.get("ML_FEATURE_STORE_ROOT", APP_ROOT / "feature_store"))
-SPLITS = ("train", "valid", "test")
+SPLITS = ("train", "test")
 STAGED = "features"  # run-folder subfolder holding materialized tables before approval
 _lock = threading.Lock()
 
@@ -38,7 +38,7 @@ MATERIALIZE = r"""
 import importlib.util, json, os, tempfile
 import numpy as np
 import pandas as pd
-
+__PLAIN__
 def signal(x, y):
     from sklearn.metrics import roc_auc_score
     if y.nunique() < 2 or x.nunique(dropna=True) < 2:
@@ -75,10 +75,10 @@ def transform(raw, where):
     extra, absent = sorted(set(out.columns) - set(declared)), sorted(set(declared) - set(out.columns))
     if extra or absent:
         raise ValueError(f"build() columns differ from reports/features.json ({where}): undeclared {extra}, missing {absent}")
-    return out[declared].reset_index(drop=True)
+    return plain(out[declared].reset_index(drop=True))
 
 try:
-    for split in ("train", "valid", "test"):
+    for split in ("train", "test"):
         raw = pd.read_parquet(f"artifacts/{split}.parquet")
         if outcome not in raw.columns:
             raise ValueError(f"artifacts/{split}.parquet has no outcome column {outcome!r}")
@@ -125,7 +125,7 @@ try:
 except Exception as exc:
     problems.append(f"{type(exc).__name__}: {exc}")
 print(json.dumps({"problems": problems, "stats": stats, "tables": rows}))
-"""
+""".replace("__PLAIN__", PLAIN_DTYPES)
 
 
 async def materialize(run: Path) -> list[str]:

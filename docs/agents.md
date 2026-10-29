@@ -125,9 +125,9 @@ feature and model family. **Clear runs** in the console starts cold.
 
 Gemini is the default, through Google AI Studio (`GEMINI_API_KEY`) or Vertex AI
 (`GOOGLE_GENAI_USE_VERTEXAI=true`, which the deployment uses). `config.models.team`
-sets the team's model and `config.models.analyst` the chat analyst's. `ML_MODEL`
-overrides the team's model with any LiteLLM model, such as Ollama. The console can
-switch the model and thinking level during a run.
+sets one model for every agent, the pipeline's team and the chat analyst alike.
+`ML_MODEL` overrides it with any LiteLLM model, such as Ollama. The console's model
+menu switches the model and thinking level for all of them.
 
 `app/agents.py` wraps Gemini so a long run survives an expired login token (it rebuilds
 the client and retries once) and a rejected prompt cache (it resends without the cache).

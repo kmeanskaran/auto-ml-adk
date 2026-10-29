@@ -33,10 +33,28 @@ function extent(spec: ChartSpec): [number, number] {
 }
 
 const rowsAt = (spec: ChartSpec, i: number): Row[] => spec.series.map((s, j) => [s.name, s.values[i], j]);
-const round = (v: number) => +v.toFixed(2);
+
+/** Short numbers for axes: 81000 → 81k, 1441.999 → 1.4k, 0.256 → 0.26. */
+function compact(v: number): string {
+  const a = Math.abs(v);
+  const short = (n: number, unit: string) => `${+n.toFixed(n < 10 ? 1 : 0)}${unit}`;
+  if (a >= 1e6) return (v < 0 ? "-" : "") + short(a / 1e6, "M");
+  if (a >= 1e3) return (v < 0 ? "-" : "") + short(a / 1e3, "k");
+  return String(+v.toFixed(2));
+}
+
+/** A pandas bin like "(1441.999, 3812.6]" reads as "1.4k–3.8k"; other labels pass through. */
+function shortLabel(text: string): string {
+  const bin = /^[([]\s*(-?[\d.e+]+),\s*(-?[\d.e+]+)\s*[)\]]$/.exec(text.trim());
+  return bin ? `${compact(+bin[1])}–${compact(+bin[2])}` : text;
+}
+
+/** Tilt category labels when they would not fit side by side under their bars. */
+const crowded = (cats: (string | number)[], band: number) =>
+  cats.length > 8 || Math.max(...cats.map((c) => shortLabel(String(c)).length)) * 6.5 > band - 6;
 
 function CategoryLabel({ x, y, text, tilt }: { x: number; y: number; text: string; tilt: boolean }) {
-  const label = text.slice(0, 14);
+  const label = shortLabel(text).slice(0, 14);
   return tilt ? (
     <text transform={`translate(${x},${y}) rotate(-40)`} textAnchor="end">
       {label}
@@ -52,7 +70,7 @@ function HBar({ spec, width, hover }: { spec: ChartSpec; width: number; hover: H
   const cats = spec.categories;
   const k = spec.series.length;
   const [lo, hi] = extent(spec);
-  const left = Math.min(180, 12 + 6.2 * Math.max(...cats.map((c) => String(c).length)));
+  const left = Math.min(180, 12 + 6.2 * Math.max(...cats.map((c) => shortLabel(String(c)).length)));
   const band = k > 1 ? 10 * k + 8 : 20;
   const H = cats.length * band + 22;
   const x = (v: number) => left + ((width - left - 44) * (v - lo)) / (hi - lo);
@@ -62,7 +80,7 @@ function HBar({ spec, width, hover }: { spec: ChartSpec; width: number; hover: H
         <g key={t}>
           <line x1={x(t)} x2={x(t)} y1={0} y2={H - 18} stroke="var(--grid)" />
           <text x={x(t)} y={H - 4} textAnchor="middle">
-            {round(t)}
+            {compact(t)}
           </text>
         </g>
       ))}
@@ -71,7 +89,7 @@ function HBar({ spec, width, hover }: { spec: ChartSpec; width: number; hover: H
         return (
           <g key={i}>
             <text x={left - 8} y={y0 + band / 2 + 4} textAnchor="end">
-              {String(c).slice(0, 28)}
+              {shortLabel(String(c)).slice(0, 28)}
             </text>
             {spec.series.map((s, j) => {
               const v = s.values[i];
@@ -84,7 +102,7 @@ function HBar({ spec, width, hover }: { spec: ChartSpec; width: number; hover: H
                   <rect className="mark" x={x(lo)} y={y} width={w} height={h} rx={3} fill={SERIES[j]} />
                   {k === 1 && (
                     <text className="value" x={x(lo) + w + 5} y={y + h - 3}>
-                      {+v.toFixed(3)}
+                      {compact(v)}
                     </text>
                   )}
                 </g>
@@ -109,9 +127,9 @@ function Columns({ spec, width, hover, stacked }: { spec: ChartSpec; width: numb
   }
   const H = 220;
   const left = 40;
-  const tilt = cats.length > 8;
-  const bottom = tilt ? 56 : 24;
   const band = (width - left) / cats.length;
+  const tilt = crowded(cats, band);
+  const bottom = tilt ? 56 : 24;
   const y = (v: number) => 8 + (H - bottom - 8) * (1 - (v - lo) / (hi - lo));
   const bw = stacked ? Math.max(4, Math.min(48, band - 10)) : Math.max(2, Math.min(28, (band - 4) / k - 2));
   const zero = y(Math.max(lo, 0));
@@ -121,7 +139,7 @@ function Columns({ spec, width, hover, stacked }: { spec: ChartSpec; width: numb
         <g key={t}>
           <line x1={left} x2={width} y1={y(t)} y2={y(t)} stroke="var(--grid)" />
           <text x={left - 6} y={y(t) + 4} textAnchor="end">
-            {round(t)}
+            {compact(t)}
           </text>
         </g>
       ))}
@@ -158,19 +176,19 @@ function Line({ spec, width, hover }: { spec: ChartSpec; width: number; hover: H
   const [lo, hi] = extent(spec);
   const H = 220;
   const left = 40;
-  const tilt = cats.length > 10;
-  const bottom = tilt ? 56 : 24;
   const step = (width - left - 10) / Math.max(1, cats.length - 1);
+  const every = Math.ceil(cats.length / 10);
+  const tilt = crowded(cats, step * every);
+  const bottom = tilt ? 56 : 24;
   const x = (i: number) => left + i * step;
   const y = (v: number) => 8 + (H - bottom - 8) * (1 - (v - lo) / (hi - lo));
-  const every = Math.ceil(cats.length / 10);
   return (
     <svg viewBox={`0 0 ${width} ${H}`} role="img" aria-label={spec.title}>
       {ticks(lo, hi).map((t) => (
         <g key={t}>
           <line x1={left} x2={width} y1={y(t)} y2={y(t)} stroke="var(--grid)" />
           <text x={left - 6} y={y(t) + 4} textAnchor="end">
-            {round(t)}
+            {compact(t)}
           </text>
         </g>
       ))}

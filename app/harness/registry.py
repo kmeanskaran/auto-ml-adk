@@ -1,7 +1,7 @@
 """Model registry: immutable versions, one production alias, and an audit log.
 
   registry/vN/version.json   lineage and metrics: run, feature view version, plan,
-                             chosen model, threshold, every metric on valid and test
+                             chosen model, threshold, every metric on test
   registry/vN/src/           serving code (predict.py + the feature view's features.py)
                              and, for lineage, the data.py and train.py that built it
   registry/vN/artifacts/     model.joblib and model.json (threshold, feature list)
@@ -108,7 +108,6 @@ def register(
             "model": model,
             "threshold": scores["threshold"],
             "metric": evaluation["metric"],
-            "valid": scores["valid"],
             "test": scores["test"],
             "baseline_test": evaluation["baseline"]["test"],
             "costs": evaluation["costs"],
@@ -206,7 +205,12 @@ def predict(rows: list[dict[str, Any]], name: str | None = None) -> dict[str, An
         finally:
             sys.path.remove(str(path.parent))
         _loaded[name] = module
-    return {"version": name, "predictions": _plain(_loaded[name].predict(rows))}
+    result = {"version": name, "predictions": _plain(_loaded[name].predict(rows))}
+    meta = read_json(REGISTRY / name / "artifacts" / "model.json") or {}
+    if meta.get("sources"):  # bundles from before "sources" say nothing
+        used = {*meta["sources"], meta.get("entity_key")}
+        result["ignored"] = sorted({k for r in rows for k in r} - used)
+    return result
 
 
 def _set_status(name: str | None, status: str, **extra: Any) -> None:

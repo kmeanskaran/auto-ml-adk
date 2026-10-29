@@ -20,7 +20,7 @@ export const WORKING: Record<string, string> = {
   features: "Engineer is building features",
   model: "Engineer is training candidates",
 };
-const SPLIT: Record<string, string> = { train: "Learn from", valid: "Compare on", test: "Final test" };
+const SPLIT: Record<string, string> = { train: "Learn from", test: "Test on" };
 
 function signalHelp(positive: string) {
   return `How well this column alone tells ${positive}s apart: 0.5 is no signal, 1 is perfect. Close to 1 usually means it was filled in after the fact.`;
@@ -96,7 +96,7 @@ function FeatureDetailsView({ d }: { d?: FeatureDetails | null }) {
   return (
     <>
       <div className="kpis">
-        {["train", "valid", "test"].map((s) =>
+        {["train", "test"].map((s) =>
           tables[s] ? (
             <div className="kpi" key={s}>
               <b>{num(tables[s].rows)}</b>
@@ -176,11 +176,11 @@ function AllScores({ lb }: { lb?: Leaderboard | null }) {
   const { metrics, record } = useWords();
   if (!lb) return null;
   const keys = Object.keys(metrics);
-  const rows = [...lb.rows, { model: "baseline", label: "Doing nothing", ...lb.baseline }];
-  const cutoff = `A ${record} is flagged when its score reaches this. It is set to keep the loss lowest.`;
-  const table = (split: "valid" | "test", title: string) => (
+  const rows = lb.rows;
+  const cutoff = `A ${record} is flagged when its score reaches this. It comes from the mistake costs, not from the data.`;
+  return (
     <>
-      <div className="small muted">{title}</div>
+      <Comparison lb={lb} />
       <div className="scroll">
         <table className="grid">
           <thead>
@@ -204,7 +204,7 @@ function AllScores({ lb }: { lb?: Leaderboard | null }) {
                 <td className="nowrap">{r.label}</td>
                 {keys.map((k) => (
                   <td className="num" key={k}>
-                    {fmt(metrics, k, r[split][k])}
+                    {fmt(metrics, k, r.test[k])}
                   </td>
                 ))}
                 <td className="num">{num(r.threshold, 2)}</td>
@@ -213,17 +213,6 @@ function AllScores({ lb }: { lb?: Leaderboard | null }) {
           </tbody>
         </table>
       </div>
-    </>
-  );
-  const compared =
-    lb.chosen_on === "valid"
-      ? "Compared on held-out rows (picks the winner and the cut-off)"
-      : `Compared by ${lb.chosen_on.slice(2)}-fold cross-validation (picks the winner and the cut-off)`;
-  return (
-    <>
-      <Comparison lb={lb} />
-      {table("valid", compared)}
-      {table("test", "Final test on rows no model saw")}
       <div className="small muted">{lb.protocol}</div>
     </>
   );

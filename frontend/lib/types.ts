@@ -30,7 +30,6 @@ export type Candidate = {
   model: string;
   label: string;
   threshold: number;
-  valid: Scores;
   test: Scores;
 };
 
@@ -38,10 +37,9 @@ export type Leaderboard = {
   metric: string;
   metric_label: string;
   best: string;
-  baseline: { threshold: number; valid: Scores; test: Scores };
+  baseline: { threshold: number; test: Scores };
   warnings: string[];
   protocol: string;
-  chosen_on: string;
   rows: Candidate[];
 };
 

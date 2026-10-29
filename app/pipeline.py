@@ -180,7 +180,7 @@ def _briefing() -> str:
 
 REVIEWED = {
     "features": ("src/data.py", "src/features.py", "reports/features.json"),
-    "model": ("src/train.py", "reports/evaluation.json"),
+    "model": ("src/train.py", "reports/features.json", "reports/evaluation.json"),
 }
 
 
@@ -506,7 +506,7 @@ async def promote_gate(ctx: Context, node_input: Any):
         # A fair-lending warning is never the team's call to wave through.
         unfair = fairness_flags(candidates.get(pick) or {})
         if unfair:
-            why = f"Fair-lending check on {pick}: {unfair[0]} A human decides whether it may go live."
+            why = f"Fair-lending warning on {pick} (below): a human decides whether it may go live."
         elif "promote" in settings.load().ask_human:
             why = "Your call: promote is a human review (autonomy.ask_human)."
         elif _review("model")[1] or evaluation.get("warnings"):

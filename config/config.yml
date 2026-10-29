@@ -32,24 +32,21 @@ fairness:
 autonomy:
   ask_human: [features, promote]     # any of: features, plan, promote
 
-# The LLMs. The team (analyst's first look, engineer, skeptic) starts on `team`; the
-# console's model menu can switch it during a run. The chat analyst always uses
-# `analyst`. thinking: low | medium | high (how long Gemini reasons before answering).
+# The LLM. One model for every agent (the pipeline's team and the chat analyst); the
+# console's model menu switches it for all of them. thinking: low | medium | high (how
+# long Gemini reasons before answering).
 # ML_MODEL in the environment overrides `team` (e.g. ollama_chat/gpt-oss:120b-cloud).
 models:
   team: gemini-3.7-flash
   team_thinking: low
-  analyst: gemini-3.5-flash
-  analyst_thinking: low
   # Prompt caching: each role's prompt and tools are stored once on Gemini (built in
   # the background, so no call waits for it) and every call reuses them.
   context_cache: true
 
 # Cost and speed guards per agent turn.
 limits:
-  tool_budget: 20                    # tool calls per turn; a wrap-up reminder at 2/3
-  skeptic_tool_budget: 10            # the skeptic's: a quick review, not a second build
+  tool_budget: 10                    # tool calls per turn; a wrap-up reminder at 2/3
+  skeptic_tool_budget: 5             # the skeptic's: a quick review, not a second build
   fix_rounds: 1                      # times a stage is sent back for an incomplete hand-over
-  cv_folds: 3                        # folds when few rows make the harness compare by CV
   compact_above_chars: 50000         # history size where old tool output gets trimmed
   script_seconds: 300                # an agent's script is stopped after this; the agents are told

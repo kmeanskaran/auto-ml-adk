@@ -311,7 +311,7 @@ def submit_receipt(findings: list[str], tool_context: ToolContext) -> dict[str, 
 
     Args:
       findings: Up to three short lines, each a decision or result with its number,
-        e.g. "Stratified split 70/15/15: every part keeps the 31% outcome rate".
+        e.g. "Stratified split 80/20: every part keeps the 31% outcome rate".
 
     Returns:
       dict with the stored receipt.
@@ -610,6 +610,8 @@ def budget_reminder(
 
 SUBMITS = {"submit_receipt", "submit_summary", "submit_review"}
 HANDED_OVER = "Handed over."
+OUT_OF_CALLS = "Out of tool calls: handed over as it is."
+GRACE = 3  # calls past the hard budget left to check and submit before the turn ends
 
 
 def handed_over(
@@ -618,8 +620,12 @@ def handed_over(
     """before_model_callback: once a submit succeeded, the turn's closing line is
     written here instead of by the model. ADK would otherwise ask the model once more
     only to say it is done: a whole model call nobody reads. The turn still ends with
-    a plain final answer, so a paused workflow resumes where it was."""
-    del callback_context
+    a plain final answer, so a paused workflow resumes where it was. A turn GRACE calls
+    past its hard budget ends here too: the harness's check judges what it left."""
+    if _turn(callback_context).calls > budgets(callback_context.agent_name)[1] + GRACE:
+        return LlmResponse(
+            content=types.Content(role="model", parts=[types.Part(text=OUT_OF_CALLS)])
+        )
     last = (llm_request.contents or [None])[-1]
     for part in (last.parts or []) if last else []:
         response = part.function_response
