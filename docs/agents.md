@@ -91,10 +91,15 @@ the harness raised no warning. Anything else comes to you, with the reason shown
 
 ### What the harness checks, not the agents
 
-- **Scoring.** `app/harness/evaluation.py` re-scores every candidate itself. It picks the
-  best on validation, using cross-validation when there are few rows, then tests it once
-  on the held-out split. It also computes the do-nothing baseline, calibration, and the
-  threshold that minimises the cost of mistakes from `config.costs`.
+- **Scoring.** `app/harness/evaluation.py` scores every candidate itself, with one simple
+  protocol: fit a fresh copy on the train split, score the test split, and let the
+  plan's metric pick the winner. The default metric is the expected cost of mistakes per
+  1,000 records. It weighs each mistake by how sure the model was, so two models
+  practically never tie. The cut-off comes from `config.costs`, not the data: a record
+  is flagged when its score reaches `false_alarm / (false_alarm + missed_positive)`
+  (2 / (2 + 1) = 0.67 in the example). The harness also scores a do-nothing baseline
+  and reports calibration. When the split follows time, it adds a drift report too.
+  The model that was scored is the model that is served.
 - **Fair lending.** For each attribute in `config.fairness`, it compares approval rates
   and the share of eligible applicants approved across groups. A ratio below `min_ratio`
   is a warning.
@@ -137,8 +142,10 @@ the client and retries once) and a rejected prompt cache (it resends without the
 - **Briefing, not re-reading.** Each request already contains the data at a glance, the
   analyst's findings, the bar to beat and past lessons. The skeptic gets the stage's
   code in its request.
-- **Tool budget.** `limits.tool_budget` calls per turn (10 for the skeptic), with a
-  wrap-up reminder at two thirds.
+- **Tool budget.** `limits.tool_budget` calls per turn (10 in the example config) and
+  `limits.skeptic_tool_budget` for the skeptic (5). A wrap-up reminder comes at two
+  thirds, and a turn that goes three calls past its budget is ended. The harness's
+  check then judges what it left.
 - **Compaction.** Old tool output is summarised once a turn's history passes
   `limits.compact_above_chars`.
 - **Prompt caching.** `app/harness/prompt_cache.py` stores each role's fixed prompt and

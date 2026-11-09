@@ -41,7 +41,7 @@ ls ~/.agents/skills        # google-agents-cli-adk-code, -deploy, -eval, -observ
 ## 2. Scaffold the project
 
 ```bash
-agents-cli create ml-team -i     # base template adk, no deployment target yet, A2A on, GEMINI.md
+agents-cli create ml-team -i     # base template adk, no deployment target yet, A2A on
 agents-cli install               # uv sync into .venv
 ```
 
